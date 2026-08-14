@@ -1,4 +1,5 @@
 import type { ChatStreamRequest, DebugHttpExchange } from "../../shared/contracts.js";
+import { compactDebugValue } from "../../shared/debug.js";
 import { vertexGenerateContentUrl } from "../region-probe.js";
 
 type UpstreamChunk = {
@@ -19,7 +20,15 @@ export function buildGenerateContentBody(request: ChatStreamRequest): Record<str
   return {
     contents: request.messages.map((message) => ({
       role: message.role === "assistant" ? "model" : "user",
-      parts: [{ text: message.content }],
+      parts: [
+        { text: message.content },
+        ...(message.files ?? []).flatMap((file) => file.kind === "text"
+          ? [{ text: `\n\n--- Attached file: ${file.name} (${file.mimeType}) ---\n${file.text}\n--- End attached file: ${file.name} ---` }]
+          : [
+              { text: `Attached PDF: ${file.name}` },
+              { inlineData: { mimeType: file.mimeType, data: file.data } },
+            ]),
+      ],
     })),
     ...(request.systemInstruction
       ? { systemInstruction: { role: "system", parts: [{ text: request.systemInstruction }] } }
@@ -94,7 +103,9 @@ export function describeUpstreamRequest(
     method: upstream.init.method ?? "GET",
     url: url.toString(),
     headers: safeHeaders,
-    ...(body === undefined ? {} : { body }),
+    ...(body === undefined ? {} : {
+      body: compactDebugValue(body, { maxStringCharacters: 4_000, maxArrayItems: 40 }),
+    }),
   };
 }
 

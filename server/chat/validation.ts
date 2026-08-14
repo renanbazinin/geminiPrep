@@ -1,9 +1,17 @@
-import type { ChatStreamRequest, MessageRole, ProviderId } from "../../shared/contracts.js";
+import type {
+  ChatRequestFilePart,
+  ChatStreamRequest,
+  MessageRole,
+  ProviderId,
+} from "../../shared/contracts.js";
 import type { ModelOption, RegionOption } from "../../shared/contracts.js";
 
 const MAX_HISTORY_MESSAGES = 200;
-const MAX_TOTAL_CHARACTERS = 200_000;
+const MAX_TOTAL_CHARACTERS = 1_000_000;
 const MAX_SYSTEM_CHARACTERS = 20_000;
+const MAX_FILES_PER_MESSAGE = 10;
+const MAX_FILES_PER_REQUEST = 30;
+const MAX_TOTAL_INLINE_DATA_CHARACTERS = 28_000_000;
 
 function isRole(value: unknown): value is MessageRole {
   return value === "user" || value === "assistant";
@@ -62,6 +70,8 @@ export function validateChatRequest(
   }
 
   let totalCharacters = 0;
+  let totalFiles = 0;
+  let totalInlineDataCharacters = 0;
   const messages = input.messages.map((candidate, index) => {
     if (!candidate || typeof candidate !== "object") fail(`messages[${index}] is invalid.`);
     const entry = candidate as Record<string, unknown>;
@@ -70,11 +80,60 @@ export function validateChatRequest(
       fail(`messages[${index}].content is required.`);
     }
     totalCharacters += entry.content.length;
-    return { role: entry.role, content: entry.content };
+    let files: ChatRequestFilePart[] | undefined;
+    if (entry.files !== undefined) {
+      if (entry.role !== "user") fail(`messages[${index}].files are only supported for user messages.`);
+      if (!Array.isArray(entry.files) || entry.files.length === 0 || entry.files.length > MAX_FILES_PER_MESSAGE) {
+        fail(`messages[${index}].files must contain between 1 and ${MAX_FILES_PER_MESSAGE} files.`);
+      }
+      totalFiles += entry.files.length;
+      files = entry.files.map((candidateFile, fileIndex) => {
+        if (!candidateFile || typeof candidateFile !== "object") {
+          fail(`messages[${index}].files[${fileIndex}] is invalid.`);
+        }
+        const file = candidateFile as Record<string, unknown>;
+        if (typeof file.name !== "string" || !file.name.trim() || file.name.length > 255) {
+          fail(`messages[${index}].files[${fileIndex}].name is invalid.`);
+        }
+        if (typeof file.mimeType !== "string" || !/^[\w.+-]+\/[\w.+-]+$/.test(file.mimeType)) {
+          fail(`messages[${index}].files[${fileIndex}].mimeType is invalid.`);
+        }
+        if (file.kind === "text") {
+          if (typeof file.text !== "string" || !file.text.trim()) {
+            fail(`messages[${index}].files[${fileIndex}].text is required.`);
+          }
+          totalCharacters += file.text.length;
+          return { kind: "text" as const, name: file.name, mimeType: file.mimeType, text: file.text };
+        }
+        if (file.kind === "inlineData") {
+          if (file.mimeType !== "application/pdf") {
+            fail(`messages[${index}].files[${fileIndex}] inlineData must be a PDF.`);
+          }
+          if (typeof file.data !== "string" || !file.data || file.data.length % 4 !== 0 || /[^A-Za-z0-9+/=]/.test(file.data)) {
+            fail(`messages[${index}].files[${fileIndex}].data must be valid base64.`);
+          }
+          totalInlineDataCharacters += file.data.length;
+          return {
+            kind: "inlineData" as const,
+            name: file.name,
+            mimeType: "application/pdf" as const,
+            data: file.data,
+          };
+        }
+        fail(`messages[${index}].files[${fileIndex}].kind is invalid.`);
+      });
+    }
+    return { role: entry.role, content: entry.content, ...(files ? { files } : {}) };
   });
   if (messages.at(-1)?.role !== "user") fail("The last message must be from the user.");
   if (totalCharacters > MAX_TOTAL_CHARACTERS) {
     fail(`Conversation history cannot exceed ${MAX_TOTAL_CHARACTERS} characters.`);
+  }
+  if (totalFiles > MAX_FILES_PER_REQUEST) {
+    fail(`Conversation history cannot contain more than ${MAX_FILES_PER_REQUEST} files.`);
+  }
+  if (totalInlineDataCharacters > MAX_TOTAL_INLINE_DATA_CHARACTERS) {
+    fail("Inline PDF data in the conversation cannot exceed the local 20 MB request budget.");
   }
 
   return {
@@ -87,4 +146,3 @@ export function validateChatRequest(
     messages,
   };
 }
-

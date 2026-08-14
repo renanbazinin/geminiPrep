@@ -50,6 +50,35 @@ describe("conversation storage", () => {
     expect(loadConversations()[0].messages[0].debug?.timing.clientDurationMs).toBe(100);
   });
 
+  it("persists attachment metadata without embedding file payloads", () => {
+    const conversation = createConversation();
+    conversation.messages.push({
+      id: "user-files",
+      role: "user",
+      content: "Review these files",
+      createdAt: "2026-08-14T00:00:00.000Z",
+      status: "complete",
+      attachments: [{
+        id: "file-1",
+        storageKey: "attachment:file-1",
+        name: "notes.docx",
+        mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        size: 4096,
+        kind: "docx",
+        extractedCharacters: 120,
+      }],
+    });
+
+    saveConversations([conversation]);
+
+    expect(loadConversations()[0].messages[0].attachments?.[0]).toMatchObject({
+      name: "notes.docx",
+      storageKey: "attachment:file-1",
+      extractedCharacters: 120,
+    });
+    expect(localStorage.getItem("gemini-prep:conversations:v1")).not.toContain("PK");
+  });
+
   it("recovers from malformed JSON", () => {
     localStorage.setItem("gemini-prep:conversations:v1", "not-json");
     expect(loadConversations()).toHaveLength(1);

@@ -2,24 +2,41 @@ import {
   ArrowUp,
   Check,
   Copy,
+  FileJson,
+  FileText,
+  FileType2,
+  LoaderCircle,
+  Paperclip,
+  Presentation,
   RotateCcw,
   Settings2,
   Sparkles,
   Square,
+  X,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { Link } from "react-router-dom";
 import type {
   ChatMessage,
   ChatMessageDebug,
+  ChatAttachment,
   ChatStreamErrorData,
   ChatStreamRequest,
 } from "../../shared/contracts";
+import { compactDebugValue } from "../../shared/debug";
 import { MarkdownMessage } from "../components/MarkdownMessage";
 import { MessageDebugBubble } from "../components/MessageDebugBubble";
 import { useApp } from "../contexts/AppContext";
 import { useConfig } from "../contexts/ConfigContext";
 import { streamChat } from "../lib/api";
+import {
+  ATTACHMENT_ACCEPT,
+  MAX_ATTACHMENTS_PER_MESSAGE,
+  MAX_ATTACHMENT_BYTES,
+  attachmentToRequestPart,
+  deleteAttachmentPayloads,
+  processAttachment,
+} from "../lib/attachments";
 import { createId } from "../lib/storage";
 
 const SUGGESTIONS = [
@@ -32,10 +49,42 @@ function directionFor(text: string): "rtl" | "ltr" {
   return /[\u0590-\u08ff]/.test(text) ? "rtl" : "ltr";
 }
 
-function messageHistory(messages: ChatMessage[]): ChatStreamRequest["messages"] {
-  return messages
+async function messageHistory(messages: ChatMessage[]): Promise<ChatStreamRequest["messages"]> {
+  return Promise.all(messages
     .filter((message) => message.content.trim() && message.status !== "error")
-    .map((message) => ({ role: message.role, content: message.content }));
+    .map(async (message) => ({
+      role: message.role,
+      content: message.content,
+      ...(message.attachments?.length
+        ? { files: await Promise.all(message.attachments.map(attachmentToRequestPart)) }
+        : {}),
+    })));
+}
+
+function fileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function AttachmentIcon({ attachment, size = 15 }: { attachment: ChatAttachment; size?: number }) {
+  if (attachment.kind === "pptx") return <Presentation size={size} />;
+  if (attachment.kind === "docx") return <FileType2 size={size} />;
+  if (attachment.name.toLowerCase().endsWith(".json")) return <FileJson size={size} />;
+  return <FileText size={size} />;
+}
+
+function MessageAttachments({ attachments }: { attachments: ChatAttachment[] }) {
+  return (
+    <div className="message-attachments" aria-label="Attached files">
+      {attachments.map((attachment) => (
+        <div className="message-attachment" key={attachment.id} title={attachment.name}>
+          <span><AttachmentIcon attachment={attachment} /></span>
+          <div><strong>{attachment.name}</strong><small>{attachment.kind.toUpperCase()} · {fileSize(attachment.size)}</small></div>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 function initialDebugTrace(request: ChatStreamRequest, startedAt: string): ChatMessageDebug {
@@ -46,7 +95,7 @@ function initialDebugTrace(request: ChatStreamRequest, startedAt: string): ChatM
         method: "POST",
         url: "/api/chat/stream",
         headers: { "Content-Type": "application/json" },
-        body: request,
+        body: compactDebugValue(request, { maxStringCharacters: 4_000, maxArrayItems: 40 }),
       },
     },
     response: {
@@ -118,13 +167,31 @@ export function ChatPage() {
   const { config, loading: configLoading, error: configError } = useConfig();
   const [draft, setDraft] = useState("");
   const [running, setRunning] = useState(false);
+  const [preparing, setPreparing] = useState(false);
+  const [processingFiles, setProcessingFiles] = useState(false);
+  const [pendingAttachments, setPendingAttachments] = useState<ChatAttachment[]>([]);
+  const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const pendingAttachmentsRef = useRef<ChatAttachment[]>([]);
+  const pendingConversationRef = useRef(activeConversation.id);
 
+  const messageCount = activeConversation.messages.length;
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [activeConversation.messages]);
+  }, [activeConversation.id, messageCount]);
+
+  useEffect(() => {
+    if (pendingConversationRef.current === activeConversation.id) return;
+    const stale = pendingAttachmentsRef.current;
+    pendingAttachmentsRef.current = [];
+    setPendingAttachments([]);
+    setAttachmentError(null);
+    pendingConversationRef.current = activeConversation.id;
+    void deleteAttachmentPayloads(stale).catch(() => undefined);
+  }, [activeConversation.id]);
 
   useEffect(() => {
     const handler = (event: globalThis.KeyboardEvent) => {
@@ -139,7 +206,45 @@ export function ChatPage() {
 
   const activeModel = settings.models[settings.provider];
   const providerReady = config?.providers[settings.provider].ready ?? false;
-  const canSend = draft.trim().length > 0 && !running && !configLoading && Boolean(config);
+  const canSend = (draft.trim().length > 0 || pendingAttachments.length > 0)
+    && !running && !preparing && !processingFiles && !configLoading && Boolean(config);
+
+  async function addFiles(fileList: FileList | null) {
+    if (!fileList?.length) return;
+    setAttachmentError(null);
+    const files = Array.from(fileList);
+    if (pendingAttachments.length + files.length > MAX_ATTACHMENTS_PER_MESSAGE) {
+      setAttachmentError(`You can attach up to ${MAX_ATTACHMENTS_PER_MESSAGE} files to one message.`);
+      return;
+    }
+    const totalBytes = [...pendingAttachments.map((attachment) => attachment.size), ...files.map((file) => file.size)]
+      .reduce((sum, size) => sum + size, 0);
+    if (totalBytes > MAX_ATTACHMENT_BYTES) {
+      setAttachmentError(`Attachments in one message cannot exceed ${MAX_ATTACHMENT_BYTES / 1024 / 1024} MB combined.`);
+      return;
+    }
+    setProcessingFiles(true);
+    const added: ChatAttachment[] = [];
+    try {
+      for (const file of files) added.push(await processAttachment(file));
+      const next = [...pendingAttachmentsRef.current, ...added];
+      pendingAttachmentsRef.current = next;
+      setPendingAttachments(next);
+    } catch (error) {
+      await deleteAttachmentPayloads(added).catch(() => undefined);
+      setAttachmentError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setProcessingFiles(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  }
+
+  function removePendingAttachment(attachment: ChatAttachment) {
+    const next = pendingAttachmentsRef.current.filter((candidate) => candidate.id !== attachment.id);
+    pendingAttachmentsRef.current = next;
+    setPendingAttachments(next);
+    void deleteAttachmentPayloads([attachment]).catch(() => undefined);
+  }
 
   async function run(
     conversationId: string,
@@ -265,96 +370,111 @@ export function ChatPage() {
     }
   }
 
-  function startWithText(text: string) {
-    const clean = text.trim();
-    if (!clean || running || !config) return;
+  async function startWithText(text: string) {
+    const clean = text.trim() || (pendingAttachments.length > 0 ? "Please analyze the attached files." : "");
+    if (!clean || running || preparing || processingFiles || !config) return;
+    setPreparing(true);
+    setAttachmentError(null);
     const conversationId = activeConversation.id;
     const now = new Date().toISOString();
-    const request: ChatStreamRequest = {
-      provider: settings.provider,
-      model: activeModel,
-      ...(settings.provider === "vertex" ? { region: settings.region } : {}),
-      systemInstruction: settings.systemInstruction,
-      temperature: settings.temperature,
-      maxOutputTokens: settings.maxOutputTokens,
-      messages: [...messageHistory(activeConversation.messages), { role: "user", content: clean }],
-    };
-    const debug = initialDebugTrace(request, now);
-    const userMessage: ChatMessage = {
-      id: createId(),
-      role: "user",
-      content: clean,
-      createdAt: now,
-      status: "complete",
-    };
-    const assistantMessage: ChatMessage = {
-      id: createId(),
-      role: "assistant",
-      content: "",
-      createdAt: now,
-      status: "streaming",
-      request: {
+    const attachments = [...pendingAttachmentsRef.current];
+    try {
+      const currentHistory = await messageHistory(activeConversation.messages);
+      const files = attachments.length
+        ? await Promise.all(attachments.map(attachmentToRequestPart))
+        : undefined;
+      const request: ChatStreamRequest = {
         provider: settings.provider,
         model: activeModel,
         ...(settings.provider === "vertex" ? { region: settings.region } : {}),
-      },
-      debug,
-    };
-    appendMessages(conversationId, [userMessage, assistantMessage]);
-    setDraft("");
-    void run(
-      conversationId,
-      request,
-      assistantMessage.id,
-      debug,
-    );
+        systemInstruction: settings.systemInstruction,
+        temperature: settings.temperature,
+        maxOutputTokens: settings.maxOutputTokens,
+        messages: [...currentHistory, { role: "user", content: clean, ...(files ? { files } : {}) }],
+      };
+      const debug = initialDebugTrace(request, now);
+      const userMessage: ChatMessage = {
+        id: createId(), role: "user", content: clean, createdAt: now, status: "complete",
+        ...(attachments.length ? { attachments } : {}),
+      };
+      const assistantMessage: ChatMessage = {
+        id: createId(),
+        role: "assistant",
+        content: "",
+        createdAt: now,
+        status: "streaming",
+        request: {
+          provider: settings.provider,
+          model: activeModel,
+          ...(settings.provider === "vertex" ? { region: settings.region } : {}),
+        },
+        debug,
+      };
+      appendMessages(conversationId, [userMessage, assistantMessage]);
+      pendingAttachmentsRef.current = [];
+      setPendingAttachments([]);
+      setDraft("");
+      void run(conversationId, request, assistantMessage.id, debug);
+    } catch (error) {
+      setAttachmentError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setPreparing(false);
+    }
   }
 
   function submit(event: FormEvent) {
     event.preventDefault();
-    if (canSend) startWithText(draft);
+    if (canSend) void startWithText(draft);
   }
 
   function handleComposerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
-      if (canSend) startWithText(draft);
+      if (canSend) void startWithText(draft);
     }
   }
 
-  function retryLast(message: ChatMessage) {
-    if (running || !config) return;
+  async function retryLast(message: ChatMessage) {
+    if (running || preparing || !config) return;
     const index = activeConversation.messages.findIndex((candidate) => candidate.id === message.id);
     if (index < 1) return;
     const baseMessages = activeConversation.messages.slice(0, index);
     if (baseMessages.at(-1)?.role !== "user") return;
-    removeMessage(activeConversation.id, message.id);
-    const request: ChatStreamRequest = {
-      provider: settings.provider,
-      model: activeModel,
-      ...(settings.provider === "vertex" ? { region: settings.region } : {}),
-      systemInstruction: settings.systemInstruction,
-      temperature: settings.temperature,
-      maxOutputTokens: settings.maxOutputTokens,
-      messages: messageHistory(baseMessages),
-    };
-    const startedAt = new Date().toISOString();
-    const debug = initialDebugTrace(request, startedAt);
-    const assistantMessage: ChatMessage = {
-      id: createId(),
-      role: "assistant",
-      content: "",
-      createdAt: startedAt,
-      status: "streaming",
-      request: {
+    setPreparing(true);
+    setAttachmentError(null);
+    try {
+      const request: ChatStreamRequest = {
         provider: settings.provider,
         model: activeModel,
         ...(settings.provider === "vertex" ? { region: settings.region } : {}),
-      },
-      debug,
-    };
-    appendMessages(activeConversation.id, [assistantMessage]);
-    void run(activeConversation.id, request, assistantMessage.id, debug);
+        systemInstruction: settings.systemInstruction,
+        temperature: settings.temperature,
+        maxOutputTokens: settings.maxOutputTokens,
+        messages: await messageHistory(baseMessages),
+      };
+      const startedAt = new Date().toISOString();
+      const debug = initialDebugTrace(request, startedAt);
+      const assistantMessage: ChatMessage = {
+        id: createId(),
+        role: "assistant",
+        content: "",
+        createdAt: startedAt,
+        status: "streaming",
+        request: {
+          provider: settings.provider,
+          model: activeModel,
+          ...(settings.provider === "vertex" ? { region: settings.region } : {}),
+        },
+        debug,
+      };
+      removeMessage(activeConversation.id, message.id);
+      appendMessages(activeConversation.id, [assistantMessage]);
+      void run(activeConversation.id, request, assistantMessage.id, debug);
+    } catch (error) {
+      setAttachmentError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setPreparing(false);
+    }
   }
 
   const lastAssistantId = useMemo(
@@ -380,7 +500,7 @@ export function ChatPage() {
             </p>
             <div className="suggestion-grid">
               {SUGGESTIONS.map((suggestion) => (
-                <button key={suggestion} onClick={() => startWithText(suggestion)} disabled={!config || running}>
+                <button key={suggestion} onClick={() => void startWithText(suggestion)} disabled={!config || running || preparing}>
                   {suggestion}
                   <ArrowUp size={15} />
                 </button>
@@ -410,6 +530,7 @@ export function ChatPage() {
                       : <p>{message.content}</p>}
                     {message.status === "streaming" ? <span className="streaming-caret" aria-label="Generating" /> : null}
                   </div>
+                  {message.attachments?.length ? <MessageAttachments attachments={message.attachments} /> : null}
                   {message.error ? <div className="message-error" role="alert">{message.error}</div> : null}
                   {message.status === "stopped" ? <div className="message-state">Generation stopped</div> : null}
                   {message.role === "assistant" && message.debug ? <MessageDebugBubble debug={message.debug} /> : null}
@@ -430,33 +551,68 @@ export function ChatPage() {
 
       <div className="composer-wrap">
         {configError ? <div className="composer-alert">Server setup unavailable: {configError}</div> : null}
+        {attachmentError ? <div className="composer-alert" role="alert">{attachmentError}</div> : null}
         {!configLoading && config && !providerReady ? (
           <div className="composer-alert">
             {config.providers[settings.provider].status}. <Link to="/settings">Review settings</Link>
           </div>
         ) : null}
         <form className="composer" onSubmit={submit}>
-          <textarea
-            ref={textareaRef}
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            onKeyDown={handleComposerKeyDown}
-            rows={1}
-            placeholder="Message Gemini Prep…"
-            aria-label="Message"
-            disabled={running}
-          />
-          {running ? (
-            <button type="button" className="send-button stop-button" onClick={() => abortRef.current?.abort()} aria-label="Stop generating">
-              <Square size={15} fill="currentColor" />
+          {pendingAttachments.length > 0 || processingFiles ? (
+            <div className="pending-attachments" aria-label="Files ready to attach">
+              {pendingAttachments.map((attachment) => (
+                <div className="pending-attachment" key={attachment.id}>
+                  <span className="pending-file-icon"><AttachmentIcon attachment={attachment} /></span>
+                  <div><strong>{attachment.name}</strong><small>{attachment.kind.toUpperCase()} · {fileSize(attachment.size)}{attachment.extractedCharacters ? ` · ${attachment.extractedCharacters.toLocaleString()} chars` : ""}</small></div>
+                  <button type="button" onClick={() => removePendingAttachment(attachment)} aria-label={`Remove ${attachment.name}`}><X size={14} /></button>
+                </div>
+              ))}
+              {processingFiles ? <div className="attachment-processing"><LoaderCircle size={15} />Reading files…</div> : null}
+            </div>
+          ) : null}
+          <div className="composer-main">
+            <input
+              ref={fileInputRef}
+              className="file-input"
+              type="file"
+              multiple
+              accept={ATTACHMENT_ACCEPT}
+              onChange={(event) => void addFiles(event.target.files)}
+              aria-label="Attach files"
+              disabled={running || preparing || processingFiles}
+            />
+            <button
+              type="button"
+              className="attach-button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={running || preparing || processingFiles}
+              aria-label="Choose files"
+              title="Attach PDF, Markdown, JSON, text, DOCX, or PPTX"
+            >
+              {processingFiles ? <LoaderCircle className="spin" size={18} /> : <Paperclip size={18} />}
             </button>
-          ) : (
-            <button type="submit" className="send-button" disabled={!canSend} aria-label="Send message">
-              <ArrowUp size={19} />
-            </button>
-          )}
+            <textarea
+              ref={textareaRef}
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={handleComposerKeyDown}
+              rows={1}
+              placeholder={pendingAttachments.length ? "Ask about these files…" : "Message Gemini Prep…"}
+              aria-label="Message"
+              disabled={running || preparing}
+            />
+            {running ? (
+              <button type="button" className="send-button stop-button" onClick={() => abortRef.current?.abort()} aria-label="Stop generating">
+                <Square size={15} fill="currentColor" />
+              </button>
+            ) : (
+              <button type="submit" className="send-button" disabled={!canSend} aria-label="Send message">
+                {preparing ? <LoaderCircle className="spin" size={17} /> : <ArrowUp size={19} />}
+              </button>
+            )}
+          </div>
         </form>
-        <p className="composer-footnote">Enter to send · Shift + Enter for a new line · Conversations are stored locally</p>
+        <p className="composer-footnote">Enter to send · Attach up to 10 files / 20 MB · PDFs stay visual; DOCX and PPTX become text</p>
       </div>
     </div>
   );

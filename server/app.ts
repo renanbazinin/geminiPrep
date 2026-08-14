@@ -44,7 +44,7 @@ export function createApp(options: {
   const getCacheAccessToken = options.getAccessToken ?? getVertexAccessToken;
   app.disable("x-powered-by");
   app.use(cors());
-  app.use(express.json({ limit: "11mb" }));
+  app.use(express.json({ limit: "30mb" }));
 
   app.get("/api/health", (_req, res) => res.json({ ok: true }));
   app.get("/api/config", (_req, res) => res.json(buildPublicConfig()));

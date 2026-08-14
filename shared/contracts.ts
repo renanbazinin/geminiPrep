@@ -82,6 +82,38 @@ export type ChatMessageDebug = {
   };
 };
 
+export type ChatAttachmentKind = "text" | "pdf" | "docx" | "pptx";
+
+export type ChatAttachment = {
+  id: string;
+  storageKey: string;
+  name: string;
+  mimeType: string;
+  size: number;
+  kind: ChatAttachmentKind;
+  extractedCharacters?: number;
+};
+
+export type ChatRequestFilePart =
+  | {
+      kind: "text";
+      name: string;
+      mimeType: string;
+      text: string;
+    }
+  | {
+      kind: "inlineData";
+      name: string;
+      mimeType: "application/pdf";
+      data: string;
+    };
+
+export type ChatStreamRequestMessage = {
+  role: MessageRole;
+  content: string;
+  files?: ChatRequestFilePart[];
+};
+
 export type ChatMessage = {
   id: string;
   role: MessageRole;
@@ -89,6 +121,7 @@ export type ChatMessage = {
   createdAt: string;
   status: MessageStatus;
   request?: RequestSnapshot;
+  attachments?: ChatAttachment[];
   debug?: ChatMessageDebug;
   error?: string;
 };
@@ -139,7 +172,7 @@ export type ChatStreamRequest = {
   systemInstruction?: string;
   temperature: number;
   maxOutputTokens: number;
-  messages: Array<{ role: MessageRole; content: string }>;
+  messages: ChatStreamRequestMessage[];
 };
 
 export type ChatStreamEvent =

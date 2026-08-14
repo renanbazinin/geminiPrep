@@ -66,5 +66,13 @@ describe("message debug bubble", () => {
     expect(shortenedArray[6]).toContain("items omitted from the middle");
     expect(shortenedArray.at(-1)).toBe(19);
   });
-});
 
+  it("surfaces explicit cache-hit evidence", () => {
+    const debug = debugTrace();
+    debug.request.provider!.body = { cachedContent: "projects/p/locations/global/cachedContents/cache-1" };
+    debug.response.done!.usage = { totalTokenCount: 5_020, cachedContentTokenCount: 5_000 };
+    render(<MessageDebugBubble debug={debug} />);
+    expect(screen.getByText("Cache hit · explicit")).toBeInTheDocument();
+    expect(screen.getByText("5,000 tokens")).toBeInTheDocument();
+  });
+});

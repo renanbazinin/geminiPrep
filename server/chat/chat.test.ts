@@ -73,6 +73,31 @@ describe("chat validation", () => {
     expect(() => validateChatRequest(validBody({ temperature: 3 }), catalogs())).toThrow(/temperature/);
     expect(() => validateChatRequest(validBody({ maxOutputTokens: 0 }), catalogs())).toThrow(/maxOutputTokens/);
   });
+
+  it("accepts multiple text and native PDF file parts", () => {
+    const validated = validateChatRequest(validBody({
+      messages: [{
+        role: "user",
+        content: "Compare these files",
+        files: [
+          { kind: "text", name: "notes.md", mimeType: "text/markdown", text: "# Notes" },
+          { kind: "text", name: "data.json", mimeType: "application/json", text: "{\"ok\":true}" },
+          { kind: "inlineData", name: "report.pdf", mimeType: "application/pdf", data: "JVBERi0xCg==" },
+        ],
+      }],
+    }), catalogs());
+    expect(validated.messages[0].files).toHaveLength(3);
+  });
+
+  it("rejects unsupported inline file types", () => {
+    expect(() => validateChatRequest(validBody({
+      messages: [{
+        role: "user",
+        content: "Read this",
+        files: [{ kind: "inlineData", name: "slides.pptx", mimeType: "application/zip", data: "eA==" }],
+      }],
+    }), catalogs())).toThrow(/inlineData must be a PDF/);
+  });
 });
 
 describe("provider request adapters", () => {
@@ -91,6 +116,25 @@ describe("provider request adapters", () => {
     }), catalogs()));
     expect(body.contents[1].role).toBe("model");
     expect(body.systemInstruction.parts[0].text).toBe("Be concise");
+  });
+
+  it("maps extracted text and PDF attachments into provider parts", () => {
+    const body = buildGenerateContentBody(validateChatRequest(validBody({
+      messages: [{
+        role: "user",
+        content: "Summarize",
+        files: [
+          { kind: "text", name: "brief.docx", mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", text: "Extracted Word text" },
+          { kind: "inlineData", name: "visual.pdf", mimeType: "application/pdf", data: "JVBERi0xCg==" },
+        ],
+      }],
+    }), catalogs())) as { contents: Array<{ parts: Array<Record<string, unknown>> }> };
+    expect(body.contents[0].parts).toEqual([
+      { text: "Summarize" },
+      { text: expect.stringContaining("Extracted Word text") },
+      { text: "Attached PDF: visual.pdf" },
+      { inlineData: { mimeType: "application/pdf", data: "JVBERi0xCg==" } },
+    ]);
   });
 
   it("keeps API keys in headers, not request bodies", () => {
@@ -163,7 +207,7 @@ describe("chat API", () => {
   it("streams normalized meta, delta, and done events", async () => {
     const fetchImpl = vi.fn(async () => sseResponse([
       "data: {\"responseId\":\"r1\",\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Hello\"}]}}]}\n\n",
-      "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\" world\"}]},\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"totalTokenCount\":4}}\n\n",
+      "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\" world\"}]},\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"totalTokenCount\":504,\"cachedContentTokenCount\":500}}\n\n",
     ]));
     const response = await request(createApp({ fetchImpl })).post("/api/chat/stream").send(validBody());
     expect(response.status).toBe(200);
@@ -176,6 +220,7 @@ describe("chat API", () => {
     expect(response.text).toContain('"x-goog-api-key":"[REDACTED]"');
     expect(response.text).toContain('"chunkCount":2');
     expect(response.text).toContain('"textCharacters":11');
+    expect(response.text).toContain('"cachedContentTokenCount":500');
     expect(response.text).not.toContain("test-key");
   });
 

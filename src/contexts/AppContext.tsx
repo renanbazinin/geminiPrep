@@ -18,6 +18,7 @@ import {
   saveSettings,
   settingsForConfig,
 } from "../lib/storage";
+import { deleteAttachmentPayloads } from "../lib/attachments";
 
 type AppContextValue = {
   conversations: Conversation[];
@@ -70,6 +71,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [mutateConversation]);
 
   const deleteConversation = useCallback((id: string) => {
+    const attachments = conversations
+      .find((conversation) => conversation.id === id)
+      ?.messages.flatMap((message) => message.attachments ?? []) ?? [];
+    void deleteAttachmentPayloads(attachments).catch(() => undefined);
     setConversations((current) => {
       const remaining = current.filter((conversation) => conversation.id !== id);
       if (remaining.length > 0) {
@@ -80,13 +85,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setActiveConversationIdState(replacement.id);
       return [replacement];
     });
-  }, [activeConversationId]);
+  }, [activeConversationId, conversations]);
 
   const clearConversations = useCallback(() => {
+    const attachments = conversations.flatMap((conversation) => (
+      conversation.messages.flatMap((message) => message.attachments ?? [])
+    ));
+    void deleteAttachmentPayloads(attachments).catch(() => undefined);
     const replacement = createConversation();
     setConversations([replacement]);
     setActiveConversationIdState(replacement.id);
-  }, []);
+  }, [conversations]);
 
   const appendMessages = useCallback((conversationId: string, messages: ChatMessage[]) => {
     mutateConversation(conversationId, (conversation) => {
@@ -174,4 +183,3 @@ export function useApp(): AppContextValue {
   if (!value) throw new Error("useApp must be used inside AppProvider");
   return value;
 }
-

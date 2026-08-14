@@ -6,8 +6,17 @@ behaves across Google Cloud surfaces.
 
 Every new assistant turn also keeps a collapsible local debug trace. It records the browser API
 request, the sanitized provider request, HTTP/SSE response metadata, usage, timing, event counts,
-errors, and cancellation state. Provider credentials are replaced with `[REDACTED]`; long values
-are shortened only in the visual preview, while **Copy JSON** copies the complete stored trace.
+errors, and cancellation state. Provider credentials are replaced with `[REDACTED]`. Very large
+history/parts are cut in the middle with an explicit omitted count before persistence, and the
+visual preview uses a tighter limit; **Copy JSON** copies the complete stored trace.
+The trace also identifies explicit or implicit cache hits from `cachedContentTokenCount` and shows
+the cached-token total separately.
+
+Chat messages support up to 10 local files / 20 MB combined. PDF files are sent as native visual
+parts. Markdown, JSON, CSV, XML, YAML, and plain text are sent as text parts. DOCX and PPTX files
+are unzipped locally and reduced to readable text before generation; legacy binary `.doc` files
+are intentionally rejected. File bodies live in browser IndexedDB while conversation JSON keeps
+only metadata, preventing large base64 payloads from filling `localStorage`.
 
 ## Run locally
 
