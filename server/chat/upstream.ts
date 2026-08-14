@@ -1,4 +1,4 @@
-import type { ChatStreamRequest } from "../../shared/contracts.js";
+import type { ChatStreamRequest, DebugHttpExchange } from "../../shared/contracts.js";
 import { vertexGenerateContentUrl } from "../region-probe.js";
 
 type UpstreamChunk = {
@@ -61,6 +61,43 @@ export function createUpstreamRequest(options: {
   };
 }
 
+const SENSITIVE_HEADER_NAMES = new Set([
+  "authorization",
+  "cookie",
+  "proxy-authorization",
+  "set-cookie",
+  "x-api-key",
+  "x-goog-api-key",
+]);
+
+export function describeUpstreamRequest(
+  upstream: { url: string; init: RequestInit },
+): DebugHttpExchange {
+  const headers = new Headers(upstream.init.headers);
+  const safeHeaders: Record<string, string> = {};
+  headers.forEach((value, name) => {
+    safeHeaders[name] = SENSITIVE_HEADER_NAMES.has(name.toLowerCase()) ? "[REDACTED]" : value;
+  });
+  const url = new URL(upstream.url);
+  for (const name of ["key", "api_key", "access_token", "token"]) {
+    if (url.searchParams.has(name)) url.searchParams.set(name, "[REDACTED]");
+  }
+  let body: unknown;
+  if (typeof upstream.init.body === "string") {
+    try {
+      body = JSON.parse(upstream.init.body) as unknown;
+    } catch {
+      body = upstream.init.body;
+    }
+  }
+  return {
+    method: upstream.init.method ?? "GET",
+    url: url.toString(),
+    headers: safeHeaders,
+    ...(body === undefined ? {} : { body }),
+  };
+}
+
 export async function* parseSseJson(
   stream: ReadableStream<Uint8Array>,
 ): AsyncGenerator<UpstreamChunk> {
@@ -112,4 +149,3 @@ export function upstreamErrorMessage(value: unknown, status: number): string {
 }
 
 export type { UpstreamChunk };
-

@@ -25,9 +25,11 @@ export async function fetchRegionConfig(signal?: AbortSignal): Promise<RegionTes
 export async function streamChat(
   request: ChatStreamRequest,
   handlers: {
+    onOpen?(response: { status: number; statusText: string; headers: Record<string, string> }): void;
     onMeta?(event: Extract<ChatStreamEvent, { event: "meta" }>["data"]): void;
     onDelta(text: string): void;
     onDone?(event: Extract<ChatStreamEvent, { event: "done" }>["data"]): void;
+    onError?(event: Extract<ChatStreamEvent, { event: "error" }>["data"]): void;
   },
   signal: AbortSignal,
 ): Promise<void> {
@@ -37,7 +39,16 @@ export async function streamChat(
     body: JSON.stringify(request),
     signal,
   });
-  if (!response.ok) throw new Error(await responseError(response));
+  handlers.onOpen?.({
+    status: response.status,
+    statusText: response.statusText,
+    headers: Object.fromEntries(response.headers.entries()),
+  });
+  if (!response.ok) {
+    const message = await responseError(response);
+    handlers.onError?.({ message, status: response.status });
+    throw new Error(message);
+  }
   if (!response.body) throw new Error("The server returned an empty stream.");
 
   const reader = response.body.getReader();
@@ -66,7 +77,14 @@ export async function streamChat(
         }
         if (eventName === "error") {
           terminalEvent = true;
-          throw new Error(typeof data.message === "string" ? data.message : "Streaming request failed.");
+          const error = {
+            message: typeof data.message === "string" ? data.message : "Streaming request failed.",
+            ...(typeof data.status === "number" ? { status: data.status } : {}),
+            ...(typeof data.finishedAt === "string" ? { finishedAt: data.finishedAt } : {}),
+            ...(typeof data.durationMs === "number" ? { durationMs: data.durationMs } : {}),
+          };
+          handlers.onError?.(error);
+          throw new Error(error.message);
         }
       }
       boundary = buffer.indexOf("\n\n");
@@ -75,4 +93,3 @@ export async function streamChat(
   }
   if (!terminalEvent) throw new Error("The stream ended before the model completed its response.");
 }
-

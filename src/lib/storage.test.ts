@@ -31,6 +31,25 @@ describe("conversation storage", () => {
     expect(loadConversations()[0].title).toBe("Saved");
   });
 
+  it("persists assistant debug traces with the conversation", () => {
+    const conversation = createConversation();
+    conversation.messages.push({
+      id: "assistant-debug",
+      role: "assistant",
+      content: "done",
+      createdAt: "2026-08-14T00:00:00.000Z",
+      status: "complete",
+      debug: {
+        version: 1,
+        request: { local: { method: "POST", url: "/api/chat/stream", headers: {}, body: { messages: [] } } },
+        response: { status: "complete", content: "done", deltaEvents: 1, receivedCharacters: 4 },
+        timing: { clientStartedAt: "2026-08-14T00:00:00.000Z", clientDurationMs: 100 },
+      },
+    });
+    saveConversations([conversation]);
+    expect(loadConversations()[0].messages[0].debug?.timing.clientDurationMs).toBe(100);
+  });
+
   it("recovers from malformed JSON", () => {
     localStorage.setItem("gemini-prep:conversations:v1", "not-json");
     expect(loadConversations()).toHaveLength(1);

@@ -7,6 +7,7 @@ import { validateChatRequest } from "./validation.js";
 import {
   buildGenerateContentBody,
   createUpstreamRequest,
+  describeUpstreamRequest,
   extractChunkText,
   geminiStreamUrl,
   parseSseJson,
@@ -100,6 +101,24 @@ describe("provider request adapters", () => {
     });
     expect(upstream.init.headers["x-goog-api-key"]).toBe("secret");
     expect(upstream.init.body).not.toContain("secret");
+    const debug = describeUpstreamRequest(upstream);
+    expect(debug.headers["x-goog-api-key"]).toBe("[REDACTED]");
+    expect(JSON.stringify(debug)).not.toContain("secret");
+    expect(debug.body).toMatchObject({ contents: [{ role: "user" }] });
+  });
+
+  it("redacts bearer credentials and secret URL parameters in debug data", () => {
+    const debug = describeUpstreamRequest({
+      url: "https://example.test/stream?alt=sse&key=url-secret",
+      init: {
+        method: "POST",
+        headers: { Authorization: "Bearer access-secret", "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: "safe" }),
+      },
+    });
+    expect(debug.headers.authorization).toBe("[REDACTED]");
+    expect(debug.url).not.toContain("url-secret");
+    expect(JSON.stringify(debug)).not.toContain("access-secret");
   });
 
   it("omits thought parts from visible text", () => {
@@ -153,6 +172,11 @@ describe("chat API", () => {
     expect(response.text).toContain('data: {"text":"Hello"}');
     expect(response.text).toContain('data: {"text":" world"}');
     expect(response.text).toContain("event: done");
+    expect(response.text).toContain('"providerRequest"');
+    expect(response.text).toContain('"x-goog-api-key":"[REDACTED]"');
+    expect(response.text).toContain('"chunkCount":2');
+    expect(response.text).toContain('"textCharacters":11');
+    expect(response.text).not.toContain("test-key");
   });
 
   it("normalizes upstream HTTP errors", async () => {

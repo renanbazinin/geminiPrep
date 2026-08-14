@@ -9,8 +9,14 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { Link } from "react-router-dom";
-import type { ChatMessage, ChatStreamRequest } from "../../shared/contracts";
+import type {
+  ChatMessage,
+  ChatMessageDebug,
+  ChatStreamErrorData,
+  ChatStreamRequest,
+} from "../../shared/contracts";
 import { MarkdownMessage } from "../components/MarkdownMessage";
+import { MessageDebugBubble } from "../components/MessageDebugBubble";
 import { useApp } from "../contexts/AppContext";
 import { useConfig } from "../contexts/ConfigContext";
 import { streamChat } from "../lib/api";
@@ -30,6 +36,28 @@ function messageHistory(messages: ChatMessage[]): ChatStreamRequest["messages"] 
   return messages
     .filter((message) => message.content.trim() && message.status !== "error")
     .map((message) => ({ role: message.role, content: message.content }));
+}
+
+function initialDebugTrace(request: ChatStreamRequest, startedAt: string): ChatMessageDebug {
+  return {
+    version: 1,
+    request: {
+      local: {
+        method: "POST",
+        url: "/api/chat/stream",
+        headers: { "Content-Type": "application/json" },
+        body: request,
+      },
+    },
+    response: {
+      status: "streaming",
+      events: [],
+      content: "",
+      deltaEvents: 0,
+      receivedCharacters: 0,
+    },
+    timing: { clientStartedAt: startedAt },
+  };
 }
 
 function ProviderBadge() {
@@ -115,39 +143,120 @@ export function ChatPage() {
 
   async function run(
     conversationId: string,
-    history: ChatStreamRequest["messages"],
+    request: ChatStreamRequest,
     assistantId: string,
+    initialDebug: ChatMessageDebug,
   ) {
     const controller = new AbortController();
     abortRef.current = controller;
     setRunning(true);
     let assembled = "";
+    let debug = initialDebug;
+    const clientStartedMs = Date.parse(initialDebug.timing.clientStartedAt);
+    function updateDebug(next: ChatMessageDebug, patch: Partial<ChatMessage> = {}) {
+      debug = next;
+      updateMessage(conversationId, assistantId, { ...patch, debug });
+    }
+    function finishTiming() {
+      const completedAt = new Date().toISOString();
+      return {
+        ...debug.timing,
+        completedAt,
+        clientDurationMs: Math.max(0, Date.parse(completedAt) - clientStartedMs),
+      };
+    }
     try {
-      await streamChat({
-        provider: settings.provider,
-        model: activeModel,
-        ...(settings.provider === "vertex" ? { region: settings.region } : {}),
-        systemInstruction: settings.systemInstruction,
-        temperature: settings.temperature,
-        maxOutputTokens: settings.maxOutputTokens,
-        messages: history,
-      }, {
+      await streamChat(request, {
+        onOpen(response) {
+          updateDebug({
+            ...debug,
+            response: { ...debug.response, http: response },
+            timing: { ...debug.timing, responseOpenedAt: new Date().toISOString() },
+          });
+        },
+        onMeta(meta) {
+          updateDebug({
+            ...debug,
+            request: { ...debug.request, ...(meta.providerRequest ? { provider: meta.providerRequest } : {}) },
+            response: {
+              ...debug.response,
+              meta,
+              events: [...(debug.response.events ?? []), { event: "meta", data: meta }],
+            },
+          });
+        },
         onDelta(text) {
           assembled += text;
-          updateMessage(conversationId, assistantId, { content: assembled });
+          const firstDeltaAt = debug.timing.firstDeltaAt ?? new Date().toISOString();
+          updateDebug({
+            ...debug,
+            response: {
+              ...debug.response,
+              content: assembled,
+              events: [...(debug.response.events ?? []), { event: "delta", data: { text } }],
+              deltaEvents: debug.response.deltaEvents + 1,
+              receivedCharacters: assembled.length,
+            },
+            timing: {
+              ...debug.timing,
+              firstDeltaAt,
+              clientTimeToFirstDeltaMs: Math.max(0, Date.parse(firstDeltaAt) - clientStartedMs),
+            },
+          }, { content: assembled });
         },
-        onDone() {
-          updateMessage(conversationId, assistantId, { status: "complete", content: assembled });
+        onDone(done) {
+          updateDebug({
+            ...debug,
+            response: {
+              ...debug.response,
+              status: "complete",
+              content: assembled,
+              done,
+              events: [...(debug.response.events ?? []), { event: "done", data: done }],
+            },
+            timing: finishTiming(),
+          }, { status: "complete", content: assembled });
+        },
+        onError(error) {
+          updateDebug({
+            ...debug,
+            response: {
+              ...debug.response,
+              status: "error",
+              content: assembled,
+              error,
+              events: [...(debug.response.events ?? []), { event: "error", data: error }],
+            },
+          });
         },
       }, controller.signal);
     } catch (error) {
       if (controller.signal.aborted) {
-        updateMessage(conversationId, assistantId, { status: "stopped", content: assembled });
+        updateDebug({
+          ...debug,
+          response: { ...debug.response, status: "stopped", content: assembled },
+          timing: finishTiming(),
+        }, { status: "stopped", content: assembled });
       } else {
-        updateMessage(conversationId, assistantId, {
+        const streamError: ChatStreamErrorData = debug.response.error ?? {
+          message: error instanceof Error ? error.message : String(error),
+        };
+        updateDebug({
+          ...debug,
+          response: {
+            ...debug.response,
+            status: "error",
+            content: assembled,
+            error: streamError,
+            events: debug.response.error
+              ? debug.response.events
+              : [...(debug.response.events ?? []), { event: "error", data: streamError }],
+          },
+          timing: finishTiming(),
+        }, {
           status: "error",
           content: assembled,
-          error: error instanceof Error ? error.message : String(error),
+          error: streamError.message,
         });
       }
     } finally {
@@ -161,6 +270,16 @@ export function ChatPage() {
     if (!clean || running || !config) return;
     const conversationId = activeConversation.id;
     const now = new Date().toISOString();
+    const request: ChatStreamRequest = {
+      provider: settings.provider,
+      model: activeModel,
+      ...(settings.provider === "vertex" ? { region: settings.region } : {}),
+      systemInstruction: settings.systemInstruction,
+      temperature: settings.temperature,
+      maxOutputTokens: settings.maxOutputTokens,
+      messages: [...messageHistory(activeConversation.messages), { role: "user", content: clean }],
+    };
+    const debug = initialDebugTrace(request, now);
     const userMessage: ChatMessage = {
       id: createId(),
       role: "user",
@@ -179,13 +298,15 @@ export function ChatPage() {
         model: activeModel,
         ...(settings.provider === "vertex" ? { region: settings.region } : {}),
       },
+      debug,
     };
     appendMessages(conversationId, [userMessage, assistantMessage]);
     setDraft("");
     void run(
       conversationId,
-      [...messageHistory(activeConversation.messages), { role: "user", content: clean }],
+      request,
       assistantMessage.id,
+      debug,
     );
   }
 
@@ -208,20 +329,32 @@ export function ChatPage() {
     const baseMessages = activeConversation.messages.slice(0, index);
     if (baseMessages.at(-1)?.role !== "user") return;
     removeMessage(activeConversation.id, message.id);
+    const request: ChatStreamRequest = {
+      provider: settings.provider,
+      model: activeModel,
+      ...(settings.provider === "vertex" ? { region: settings.region } : {}),
+      systemInstruction: settings.systemInstruction,
+      temperature: settings.temperature,
+      maxOutputTokens: settings.maxOutputTokens,
+      messages: messageHistory(baseMessages),
+    };
+    const startedAt = new Date().toISOString();
+    const debug = initialDebugTrace(request, startedAt);
     const assistantMessage: ChatMessage = {
       id: createId(),
       role: "assistant",
       content: "",
-      createdAt: new Date().toISOString(),
+      createdAt: startedAt,
       status: "streaming",
       request: {
         provider: settings.provider,
         model: activeModel,
         ...(settings.provider === "vertex" ? { region: settings.region } : {}),
       },
+      debug,
     };
     appendMessages(activeConversation.id, [assistantMessage]);
-    void run(activeConversation.id, messageHistory(baseMessages), assistantMessage.id);
+    void run(activeConversation.id, request, assistantMessage.id, debug);
   }
 
   const lastAssistantId = useMemo(
@@ -279,6 +412,7 @@ export function ChatPage() {
                   </div>
                   {message.error ? <div className="message-error" role="alert">{message.error}</div> : null}
                   {message.status === "stopped" ? <div className="message-state">Generation stopped</div> : null}
+                  {message.role === "assistant" && message.debug ? <MessageDebugBubble debug={message.debug} /> : null}
                   {message.role === "assistant" && message.status !== "streaming" ? (
                     <MessageActions
                       message={message}

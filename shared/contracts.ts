@@ -20,6 +20,68 @@ export type RequestSnapshot = {
   region?: string;
 };
 
+export type DebugHttpExchange = {
+  method: string;
+  url: string;
+  headers: Record<string, string>;
+  body?: unknown;
+};
+
+export type ChatStreamMeta = RequestSnapshot & {
+  startedAt: string;
+  providerRequest?: DebugHttpExchange;
+};
+
+export type ChatStreamDone = {
+  finishReason?: string;
+  responseId?: string;
+  usage?: Record<string, unknown>;
+  providerStatus?: number;
+  finishedAt?: string;
+  durationMs?: number;
+  timeToFirstTokenMs?: number;
+  chunkCount?: number;
+  textCharacters?: number;
+};
+
+export type ChatStreamErrorData = {
+  message: string;
+  status?: number;
+  finishedAt?: string;
+  durationMs?: number;
+};
+
+export type ChatMessageDebug = {
+  version: 1;
+  request: {
+    local: DebugHttpExchange;
+    provider?: DebugHttpExchange;
+  };
+  response: {
+    status: MessageStatus;
+    http?: {
+      status: number;
+      statusText: string;
+      headers: Record<string, string>;
+    };
+    meta?: ChatStreamMeta;
+    done?: ChatStreamDone;
+    error?: ChatStreamErrorData;
+    events?: ChatStreamEvent[];
+    content: string;
+    deltaEvents: number;
+    receivedCharacters: number;
+  };
+  timing: {
+    clientStartedAt: string;
+    responseOpenedAt?: string;
+    firstDeltaAt?: string;
+    completedAt?: string;
+    clientDurationMs?: number;
+    clientTimeToFirstDeltaMs?: number;
+  };
+};
+
 export type ChatMessage = {
   id: string;
   role: MessageRole;
@@ -27,6 +89,7 @@ export type ChatMessage = {
   createdAt: string;
   status: MessageStatus;
   request?: RequestSnapshot;
+  debug?: ChatMessageDebug;
   error?: string;
 };
 
@@ -80,17 +143,10 @@ export type ChatStreamRequest = {
 };
 
 export type ChatStreamEvent =
-  | { event: "meta"; data: RequestSnapshot & { startedAt: string } }
+  | { event: "meta"; data: ChatStreamMeta }
   | { event: "delta"; data: { text: string } }
-  | {
-      event: "done";
-      data: {
-        finishReason?: string;
-        responseId?: string;
-        usage?: Record<string, unknown>;
-      };
-    }
-  | { event: "error"; data: { message: string; status?: number } };
+  | { event: "done"; data: ChatStreamDone }
+  | { event: "error"; data: ChatStreamErrorData };
 
 export type RegionVerdict =
   | "available"

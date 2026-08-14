@@ -4,6 +4,11 @@ Gemini Prep is a local, Vertex-first chat and endpoint learning lab. It combines
 streaming chat interface with focused, documented experiments that help explain how Gemini
 behaves across Google Cloud surfaces.
 
+Every new assistant turn also keeps a collapsible local debug trace. It records the browser API
+request, the sanitized provider request, HTTP/SSE response metadata, usage, timing, event counts,
+errors, and cancellation state. Provider credentials are replaced with `[REDACTED]`; long values
+are shortened only in the visual preview, while **Copy JSON** copies the complete stored trace.
+
 ## Run locally
 
 Requirements:
