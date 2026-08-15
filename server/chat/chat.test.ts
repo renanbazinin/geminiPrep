@@ -56,6 +56,49 @@ describe("chat validation", () => {
     expect(validateChatRequest(body, catalogs()).region).toBe(resolveProbeRegions()[0].id);
   });
 
+  it("accepts thinkingLevel and rejects any other value", () => {
+    expect(validateChatRequest(validBody({ thinkingLevel: "low" }), catalogs()).thinkingLevel).toBe("low");
+    expect(validateChatRequest(validBody(), catalogs()).thinkingLevel).toBeUndefined();
+    expect(() => validateChatRequest(validBody({ thinkingLevel: "medium" }), catalogs()))
+      .toThrow(/thinkingLevel must be low or high/);
+  });
+
+  it("accepts a cachedContent resource name in the request's own region", () => {
+    const region = resolveProbeRegions()[0].id;
+    const body = validBody({
+      provider: "vertex",
+      model: resolveVertexChatModels()[0].id,
+      region,
+      cachedContent: `projects/study-project/locations/${region}/cachedContents/cache_123`,
+    });
+    expect(validateChatRequest(body, catalogs()).cachedContent)
+      .toBe(`projects/study-project/locations/${region}/cachedContents/cache_123`);
+  });
+
+  it("rejects a cache from a different location than the request", () => {
+    const region = resolveProbeRegions()[0].id;
+    const other = resolveProbeRegions().find((candidate) => candidate.id !== region)?.id ?? "us-central1";
+    const body = validBody({
+      provider: "vertex",
+      model: resolveVertexChatModels()[0].id,
+      region,
+      cachedContent: `projects/study-project/locations/${other}/cachedContents/cache_123`,
+    });
+    expect(() => validateChatRequest(body, catalogs())).toThrow(/does not match the request region/);
+  });
+
+  it("rejects cachedContent on the Gemini API and malformed names", () => {
+    expect(() => validateChatRequest(validBody({
+      cachedContent: "projects/p/locations/global/cachedContents/cache_123",
+    }), catalogs())).toThrow(/only supported on Vertex AI/);
+    expect(() => validateChatRequest(validBody({
+      provider: "vertex",
+      model: resolveVertexChatModels()[0].id,
+      region: resolveProbeRegions()[0].id,
+      cachedContent: "cachedContents/cache_123",
+    }), catalogs())).toThrow(/cachedContents resource name/);
+  });
+
   it("rejects an unknown model", () => {
     expect(() => validateChatRequest(validBody({ model: "unknown" }), catalogs())).toThrow(/not configured/);
   });
@@ -135,6 +178,27 @@ describe("provider request adapters", () => {
       { text: "Attached PDF: visual.pdf" },
       { inlineData: { mimeType: "application/pdf", data: "JVBERi0xCg==" } },
     ]);
+  });
+
+  it("sends thinkingConfig inside generationConfig only when set", () => {
+    const withLevel = buildGenerateContentBody(validateChatRequest(validBody({ thinkingLevel: "low" }), catalogs()));
+    expect(withLevel.generationConfig).toMatchObject({ thinkingConfig: { thinkingLevel: "low" } });
+    expect(buildGenerateContentBody(validateChatRequest(validBody(), catalogs())).generationConfig)
+      .not.toHaveProperty("thinkingConfig");
+  });
+
+  it("sends cachedContent and drops the duplicate system instruction the cache already holds", () => {
+    const region = resolveProbeRegions()[0].id;
+    const name = `projects/study-project/locations/${region}/cachedContents/cache_123`;
+    const body = buildGenerateContentBody(validateChatRequest(validBody({
+      provider: "vertex",
+      model: resolveVertexChatModels()[0].id,
+      region,
+      systemInstruction: "Be concise",
+      cachedContent: name,
+    }), catalogs()));
+    expect(body.cachedContent).toBe(name);
+    expect(body).not.toHaveProperty("systemInstruction");
   });
 
   it("keeps API keys in headers, not request bodies", () => {

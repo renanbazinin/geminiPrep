@@ -238,7 +238,10 @@ export function createApp(options: {
           : 0.2,
         maxOutputTokens: Number.isInteger(Number(req.body?.maxOutputTokens))
           ? Math.min(8192, Math.max(1, Number(req.body.maxOutputTokens)))
-          : 512,
+          : 2048,
+        ...(req.body?.thinkingLevel === "low" || req.body?.thinkingLevel === "high"
+          ? { thinkingLevel: req.body.thinkingLevel }
+          : {}),
         fetchImpl: options.fetchImpl,
       }));
     } catch (error) {

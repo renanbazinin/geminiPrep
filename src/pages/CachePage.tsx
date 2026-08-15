@@ -9,23 +9,33 @@ import {
   FileText,
   Layers3,
   ListRestart,
+  Paperclip,
   Play,
+  Plus,
   RefreshCw,
   ShieldCheck,
   Sparkles,
   Trash2,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type {
-  CacheContentMode,
   CacheExpirationMode,
+  CacheFilePart,
   CacheTestConfig,
   CacheUseResult,
   CachedContentResource,
 } from "../../shared/contracts";
 import { MarkdownMessage } from "../components/MarkdownMessage";
 import { TestLanguageToggle } from "../components/TestLanguageToggle";
+import { useApp } from "../contexts/AppContext";
 import { useTestLanguage } from "../contexts/TestLanguageContext";
+import {
+  ATTACHMENT_ACCEPT,
+  attachmentToRequestPart,
+  deleteAttachmentPayloads,
+  processAttachment,
+} from "../lib/attachments";
+import { createId } from "../lib/storage";
 
 const copy = {
   en: {
@@ -36,6 +46,11 @@ const copy = {
     project: "Google Cloud project", model: "Gemini 3 model", location: "Location", displayName: "Display name", immutable: "immutable",
     system: "System instruction", systemPlaceholder: "Optional instruction shared by every request that uses this cache…",
     contentSource: "Cached content source", text: "Inline text", gcs: "Cloud Storage file", cachedText: "Text to cache", gcsUri: "GCS URI", mimeType: "MIME type",
+    files: "Cached files", filesHelp: "Every file becomes another part of the same cached content, alongside the text above. Cache text, files, or both.",
+    addFiles: "Add files", addGcs: "Add Cloud Storage file", add: "Add", remove: "Remove", noFiles: "No files added.",
+    fileKindInline: "inlineData", fileKindGcs: "fileData", fileKindText: "extracted text",
+    filesUncounted: "Files also add tokens, which this character-based estimate does not include.",
+    fileHint: "PDFs are sent inline as base64. Other formats are extracted to text in the browser. Use a gs:// URI for large files.",
     sample: "Fill ~5K-token learning sample", clear: "Clear", estimate: "Estimated tokens", minimum: "Gemini 3 minimum", estimateNote: "Character-based estimate only; Vertex reports the authoritative token count after creation.",
     expiration: "Expiration", ttl: "TTL (seconds from now)", exact: "Exact expireTime", ttlHelp: "Default is 3,600 seconds. Minimum is 60 seconds; there is no documented maximum.",
     cmek: "CMEK resource name", optional: "optional", cmekHelp: "CMEK is unavailable on the global endpoint. The CryptoKey is immutable after creation.",
@@ -59,6 +74,11 @@ const copy = {
     project: "פרויקט Google Cloud", model: "מודל Gemini 3", location: "מיקום", displayName: "שם תצוגה", immutable: "בלתי ניתן לשינוי",
     system: "הוראת מערכת", systemPlaceholder: "הוראה אופציונלית המשותפת לכל בקשה שמשתמשת במטמון…",
     contentSource: "מקור התוכן למטמון", text: "טקסט מוטמע", gcs: "קובץ Cloud Storage", cachedText: "טקסט למטמון", gcsUri: "כתובת GCS", mimeType: "סוג MIME",
+    files: "קבצים במטמון", filesHelp: "כל קובץ הופך לחלק (part) נוסף באותו תוכן שמור, לצד הטקסט שלמעלה. אפשר לשמור טקסט, קבצים או שניהם.",
+    addFiles: "הוספת קבצים", addGcs: "הוספת קובץ Cloud Storage", add: "הוספה", remove: "הסרה", noFiles: "לא נוספו קבצים.",
+    fileKindInline: "inlineData", fileKindGcs: "fileData", fileKindText: "טקסט שחולץ",
+    filesUncounted: "גם הקבצים מוסיפים טוקנים, וההערכה לפי תווים אינה כוללת אותם.",
+    fileHint: "קובצי PDF נשלחים מוטמעים כ־base64. פורמטים אחרים מחולצים לטקסט בדפדפן. לקבצים גדולים השתמש בכתובת gs://.",
     sample: "מילוי דוגמת לימוד של כ־5K טוקנים", clear: "ניקוי", estimate: "הערכת טוקנים", minimum: "מינימום ל־Gemini 3", estimateNote: "זו הערכה לפי תווים בלבד; Vertex מחזיר את הספירה המוסמכת אחרי היצירה.",
     expiration: "פקיעה", ttl: "TTL (שניות מעכשיו)", exact: "expireTime מדויק", ttlHelp: "ברירת המחדל היא 3,600 שניות. המינימום 60 שניות ואין מקסימום מתועד.",
     cmek: "שם משאב CMEK", optional: "אופציונלי", cmekHelp: "CMEK אינו זמין בנקודת הקצה הגלובלית. מפתח ההצפנה בלתי ניתן לשינוי לאחר היצירה.",
@@ -75,6 +95,18 @@ const copy = {
     readiness: "הערות לסדרה 3", notes: "רשימת ברירת המחדל מבוססת על טבלת התמיכה של Google במטמון מפורש. מטמוני Gemini 3 דורשים לפחות 4,096 טוקנים; לחלק ממודלי התצוגה המקדימה יש סף אחר במטמון משתמע.",
   },
 } as const;
+
+type CacheFileEntry = CacheFilePart & { id: string };
+
+type FileKindLabels = { fileKindGcs: string; fileKindInline: string; fileKindText: string };
+
+function fileEntrySummary(file: CacheFileEntry, t: FileKindLabels): string {
+  if (file.kind === "gcs") return `${t.fileKindGcs} · ${file.fileUri}`;
+  if (file.kind === "inlineData") {
+    return `${t.fileKindInline} · ${Math.max(1, Math.round(file.data.length * 3 / 4 / 1024)).toLocaleString()} KB`;
+  }
+  return `${t.fileKindText} · ${file.text.length.toLocaleString()} chars`;
+}
 
 function defaultDisplayName(): string {
   return `gemini-prep-${new Date().toISOString().slice(0, 10)}`;
@@ -123,6 +155,7 @@ async function cachePost<T>(path: string, body: Record<string, unknown>): Promis
 
 export function CachePage() {
   const { language, direction } = useTestLanguage();
+  const { settings } = useApp();
   const t = copy[language];
   const [config, setConfig] = useState<CacheTestConfig | null>(null);
   const [project, setProject] = useState("");
@@ -130,10 +163,11 @@ export function CachePage() {
   const [region, setRegion] = useState("global");
   const [displayName, setDisplayName] = useState(defaultDisplayName);
   const [systemInstruction, setSystemInstruction] = useState("");
-  const [contentMode, setContentMode] = useState<CacheContentMode>("text");
   const [content, setContent] = useState("");
+  const [files, setFiles] = useState<CacheFileEntry[]>([]);
   const [gcsUri, setGcsUri] = useState("");
   const [mimeType, setMimeType] = useState("application/pdf");
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [expirationMode, setExpirationMode] = useState<CacheExpirationMode>("ttl");
   const [ttlSeconds, setTtlSeconds] = useState(3600);
   const [expireTime, setExpireTime] = useState(() => localDateTime());
@@ -176,7 +210,10 @@ export function CachePage() {
     return () => window.clearInterval(timer);
   }, []);
 
-  const estimatedTokens = contentMode === "text" ? Math.ceil(content.length / 4) : null;
+  const estimatedTokens = Math.ceil(
+    (content.length + files.reduce((total, file) => total + (file.kind === "text" ? file.text.length : 0), 0)) / 4,
+  );
+  const hasUncountedFiles = files.some((file) => file.kind !== "text");
   const normalizedExpireTime = expireTime && Number.isFinite(Date.parse(expireTime))
     ? new Date(expireTime).toISOString()
     : "";
@@ -187,12 +224,57 @@ export function CachePage() {
     model: `projects/${project || "PROJECT"}/locations/${region}/publishers/google/models/${model || "MODEL"}`,
     ...(displayName ? { displayName } : {}),
     ...(systemInstruction ? { systemInstruction: { parts: [{ text: systemInstruction }] } } : {}),
-    contents: contentMode === "text"
-      ? [{ role: "user", parts: [{ text: content ? `${content.slice(0, 180)}${content.length > 180 ? "…" : ""}` : "…" }] }]
-      : [{ role: "user", parts: [{ fileData: { fileUri: gcsUri || "gs://…", mimeType } }] }],
+    contents: [{
+      role: "user",
+      parts: [
+        ...(content ? [{ text: `${content.slice(0, 180)}${content.length > 180 ? "…" : ""}` }] : []),
+        ...files.map((file) => {
+          if (file.kind === "gcs") return { fileData: { fileUri: file.fileUri, mimeType: file.mimeType } };
+          if (file.kind === "inlineData") return { inlineData: { mimeType: file.mimeType, data: "…" } };
+          return { text: `--- Cached file: ${file.name} (${file.mimeType}) ---…` };
+        }),
+        ...(content || files.length ? [] : [{ text: "…" }]),
+      ],
+    }],
     ...(expirationMode === "ttl" ? { ttl: `${ttlSeconds}s` } : { expireTime: normalizedExpireTime }),
     ...(kmsKeyName ? { encryptionSpec: { kmsKeyName } } : {}),
-  }), [content, contentMode, displayName, expirationMode, gcsUri, kmsKeyName, mimeType, model, normalizedExpireTime, project, region, systemInstruction, ttlSeconds]);
+  }), [content, displayName, expirationMode, files, kmsKeyName, model, normalizedExpireTime, project, region, systemInstruction, ttlSeconds]);
+
+  async function addLocalFiles(selected: FileList | null) {
+    if (!selected?.length) return;
+    prepareAction("files");
+    const added: CacheFileEntry[] = [];
+    try {
+      for (const file of Array.from(selected)) {
+        const attachment = await processAttachment(file);
+        try {
+          const part = await attachmentToRequestPart(attachment);
+          added.push({ ...part, id: createId() });
+        } finally {
+          await deleteAttachmentPayloads([attachment]);
+        }
+      }
+      setFiles((current) => [...current, ...added]);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setBusy(null);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  }
+
+  function addGcsFile() {
+    const uri = gcsUri.trim();
+    if (!uri || !mimeType.trim()) return;
+    setFiles((current) => [...current, {
+      kind: "gcs",
+      id: createId(),
+      name: uri.split("/").at(-1) || uri,
+      mimeType: mimeType.trim(),
+      fileUri: uri,
+    }]);
+    setGcsUri("");
+  }
 
   function prepareAction(action: string) {
     setBusy(action);
@@ -210,10 +292,8 @@ export function CachePage() {
         region,
         displayName,
         systemInstruction,
-        contentMode,
         content,
-        gcsUri,
-        mimeType,
+        files: files.map(({ id: _id, ...part }) => part),
         expirationMode,
         ttlSeconds,
         expireTime: expirationMode === "expireTime" ? normalizedExpireTime : undefined,
@@ -280,7 +360,8 @@ export function CachePage() {
         region: resource.name.split("/")[3] ?? region,
         prompt,
         temperature: 0.2,
-        maxOutputTokens: 512,
+        maxOutputTokens: 2048,
+        thinkingLevel: settings.thinkingLevel,
       }));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
@@ -373,32 +454,65 @@ export function CachePage() {
 
         <div className="cache-subsection">
           <div className="cache-subsection-title"><FileText size={17} /><strong>{t.contentSource}</strong><span className="inline-badge">{t.immutable}</span></div>
-          <div className="segmented-control">
-            <button className={contentMode === "text" ? "active" : ""} onClick={() => setContentMode("text")}>{t.text}</button>
-            <button className={contentMode === "gcs" ? "active" : ""} onClick={() => setContentMode("gcs")}>{t.gcs}</button>
+          <p className="cache-subsection-help">{t.filesHelp}</p>
+          <label className="form-field">
+            <span>{t.cachedText}</span>
+            <textarea className="cache-content-editor" rows={10} value={content} onChange={(event) => setContent(event.target.value)} />
+          </label>
+          <div className="cache-editor-actions">
+            <button className="secondary-button" onClick={() => setContent(sampleContext(language))}><Sparkles size={15} />{t.sample}</button>
+            <button className="text-button" onClick={() => setContent("")}>{t.clear}</button>
           </div>
-          {contentMode === "text" ? (
-            <>
-              <label className="form-field">
-                <span>{t.cachedText}</span>
-                <textarea className="cache-content-editor" rows={10} value={content} onChange={(event) => setContent(event.target.value)} />
-              </label>
-              <div className="cache-editor-actions">
-                <button className="secondary-button" onClick={() => setContent(sampleContext(language))}><Sparkles size={15} />{t.sample}</button>
-                <button className="text-button" onClick={() => setContent("")}>{t.clear}</button>
-              </div>
-              <div className={`token-meter${estimatedTokens && estimatedTokens >= (config?.limits.minimumTokensGemini3 ?? 4096) ? " token-meter-ready" : ""}`}>
-                <div><span>{t.estimate}</span><strong>≈ {estimatedTokens?.toLocaleString()}</strong></div>
-                <div><span>{t.minimum}</span><strong>{(config?.limits.minimumTokensGemini3 ?? 4096).toLocaleString()}</strong></div>
-                <p>{t.estimateNote}</p>
-              </div>
-            </>
-          ) : (
+
+          <div className="cache-files">
+            <div className="cache-files-header">
+              <strong>{t.files}</strong>
+              <button className="secondary-button" onClick={() => fileInputRef.current?.click()} disabled={busy === "files"}>
+                <Paperclip size={15} />{t.addFiles}
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                accept={ATTACHMENT_ACCEPT}
+                hidden
+                onChange={(event) => void addLocalFiles(event.target.files)}
+              />
+            </div>
+            {files.length === 0 ? (
+              <p className="cache-files-empty">{t.noFiles}</p>
+            ) : (
+              <ul className="cache-files-list">
+                {files.map((file) => (
+                  <li key={file.id}>
+                    <FileText size={15} />
+                    <span className="cache-file-name">{file.name}</span>
+                    <span className="cache-file-meta">{fileEntrySummary(file, t)}</span>
+                    <button
+                      className="text-button"
+                      onClick={() => setFiles((current) => current.filter((entry) => entry.id !== file.id))}
+                    >
+                      {t.remove}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
             <div className="cache-fields-grid">
               <label className="form-field"><span>{t.gcsUri}</span><input value={gcsUri} onChange={(event) => setGcsUri(event.target.value)} placeholder="gs://bucket/path/document.pdf" /></label>
               <label className="form-field"><span>{t.mimeType}</span><input value={mimeType} onChange={(event) => setMimeType(event.target.value)} placeholder="application/pdf" /></label>
             </div>
-          )}
+            <button className="secondary-button" onClick={addGcsFile} disabled={!gcsUri.trim() || !mimeType.trim()}>
+              <Plus size={15} />{t.addGcs}
+            </button>
+            <small>{t.fileHint}</small>
+          </div>
+
+          <div className={`token-meter${estimatedTokens >= (config?.limits.minimumTokensGemini3 ?? 4096) ? " token-meter-ready" : ""}`}>
+            <div><span>{t.estimate}</span><strong>≈ {estimatedTokens.toLocaleString()}</strong></div>
+            <div><span>{t.minimum}</span><strong>{(config?.limits.minimumTokensGemini3 ?? 4096).toLocaleString()}</strong></div>
+            <p>{t.estimateNote}{hasUncountedFiles ? ` ${t.filesUncounted}` : ""}</p>
+          </div>
         </div>
 
         <div className="cache-subsection cache-expiration-section">
@@ -418,7 +532,7 @@ export function CachePage() {
         </div>
 
         <details className="payload-preview"><summary>{t.payload}</summary><pre>{JSON.stringify(fieldPreview, null, 2)}</pre></details>
-        <button className="primary-button cache-create-button" onClick={() => void createCache()} disabled={Boolean(busy) || !project || !model || !expirationValid || (contentMode === "text" ? !content : !gcsUri || !mimeType)}>
+        <button className="primary-button cache-create-button" onClick={() => void createCache()} disabled={Boolean(busy) || !project || !model || !expirationValid || (!content && files.length === 0)}>
           <Layers3 size={17} />{busy === "create" ? t.creating : t.create}
         </button>
       </section>

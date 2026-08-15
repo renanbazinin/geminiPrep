@@ -1,7 +1,9 @@
 import type {
   CacheCreateRequest,
   CachedContentResource,
+  CacheFilePart,
   CacheUseResult,
+  ThinkingLevel,
 } from "../shared/contracts.js";
 import { vertexGenerateContentUrl, vertexHost } from "./region-probe.js";
 
@@ -10,6 +12,9 @@ export const CACHE_MIN_TTL_SECONDS = 60;
 export const CACHE_DEFAULT_TTL_SECONDS = 3600;
 export const CACHE_MAX_INLINE_BYTES = 10 * 1024 * 1024;
 export const GEMINI_3_MIN_CACHE_TOKENS = 4096;
+export const CACHE_MAX_FILE_PARTS = 10;
+/** Vertex rejects oversized requests, so keep every base64 `inlineData` part in one request under this. */
+export const CACHE_MAX_INLINE_FILE_BYTES = 15 * 1024 * 1024;
 
 type FetchLike = typeof fetch;
 
@@ -50,17 +55,22 @@ export function cacheResourceUrl(name: string): string {
   return `${vertexHost(parsed.region)}/v1/${parsed.name}`;
 }
 
+function cacheFilePartToVertexPart(file: CacheFilePart): Record<string, unknown> {
+  if (file.kind === "gcs") return { fileData: { fileUri: file.fileUri, mimeType: file.mimeType } };
+  if (file.kind === "inlineData") return { inlineData: { mimeType: file.mimeType, data: file.data } };
+  return { text: `\n\n--- Cached file: ${file.name} (${file.mimeType}) ---\n${file.text}\n--- End cached file: ${file.name} ---` };
+}
+
 export function buildCacheCreateBody(options: {
   project: string;
   request: CacheCreateRequest;
 }): Record<string, unknown> {
   const { project, request } = options;
-  const contents = request.contentMode === "gcs"
-    ? [{
-        role: "user",
-        parts: [{ fileData: { fileUri: request.gcsUri, mimeType: request.mimeType } }],
-      }]
-    : [{ role: "user", parts: [{ text: request.content }] }];
+  const parts: Record<string, unknown>[] = [
+    ...(request.content ? [{ text: request.content }] : []),
+    ...(request.files ?? []).map((file) => cacheFilePartToVertexPart(file)),
+  ];
+  const contents = [{ role: "user", parts }];
   return {
     model: `projects/${project}/locations/${request.region}/publishers/google/models/${request.model}`,
     ...(request.displayName ? { displayName: request.displayName } : {}),
@@ -73,6 +83,51 @@ export function buildCacheCreateBody(options: {
       : { ttl: `${request.ttlSeconds}s` }),
     ...(request.kmsKeyName ? { encryptionSpec: { kmsKeyName: request.kmsKeyName } } : {}),
   };
+}
+
+const MIME_TYPE_PATTERN = /^[\w.+-]+\/[\w.+-]+$/;
+const GCS_URI_PATTERN = /^gs:\/\/[A-Za-z0-9._-]+\/.+/;
+
+export function validateCacheFiles(value: unknown): CacheFilePart[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) throw new Error("files must be an array.");
+  if (value.length > CACHE_MAX_FILE_PARTS) {
+    throw new Error(`A cache cannot hold more than ${CACHE_MAX_FILE_PARTS} files.`);
+  }
+  let inlineBytes = 0;
+  const files = value.map((entry, index) => {
+    const label = `files[${index}]`;
+    if (!entry || typeof entry !== "object") throw new Error(`${label} must be an object.`);
+    const file = entry as Record<string, unknown>;
+    const name = typeof file.name === "string" && file.name.trim() ? file.name.trim() : "";
+    if (!name) throw new Error(`${label} requires a name.`);
+    if (typeof file.mimeType !== "string" || !MIME_TYPE_PATTERN.test(file.mimeType)) {
+      throw new Error(`${label} requires a valid MIME type.`);
+    }
+    if (file.kind === "gcs") {
+      if (typeof file.fileUri !== "string" || !GCS_URI_PATTERN.test(file.fileUri)) {
+        throw new Error(`${label} requires a valid gs:// Cloud Storage URI.`);
+      }
+      return { kind: "gcs" as const, name, mimeType: file.mimeType, fileUri: file.fileUri };
+    }
+    if (file.kind === "inlineData") {
+      if (file.mimeType !== "application/pdf") {
+        throw new Error(`${label} inlineData must be a PDF; extract other formats to text first.`);
+      }
+      if (typeof file.data !== "string" || !file.data) throw new Error(`${label} requires base64 data.`);
+      inlineBytes += Math.floor(file.data.length * 3 / 4);
+      return { kind: "inlineData" as const, name, mimeType: file.mimeType, data: file.data };
+    }
+    if (file.kind === "text") {
+      if (typeof file.text !== "string" || !file.text.trim()) throw new Error(`${label} requires text.`);
+      return { kind: "text" as const, name, mimeType: file.mimeType, text: file.text };
+    }
+    throw new Error(`${label}.kind must be gcs, inlineData, or text.`);
+  });
+  if (inlineBytes > CACHE_MAX_INLINE_FILE_BYTES) {
+    throw new Error("Inline files exceed 15 MB in one request; upload them to Cloud Storage and cache the gs:// URI instead.");
+  }
+  return files;
 }
 
 export function validateCacheCreateRequest(
@@ -93,27 +148,17 @@ export function validateCacheCreateRequest(
     ? input.systemInstruction.trim()
     : "";
   if (systemInstruction.length > 20_000) throw new Error("systemInstruction cannot exceed 20,000 characters.");
-  const contentMode = input.contentMode;
-  if (contentMode !== "text" && contentMode !== "gcs") throw new Error("contentMode must be text or gcs.");
-
   let content: string | undefined;
-  let gcsUri: string | undefined;
-  let mimeType: string | undefined;
-  if (contentMode === "text") {
-    if (typeof input.content !== "string" || !input.content.trim()) throw new Error("Text content is required.");
+  if (input.content !== undefined && input.content !== null && input.content !== "") {
+    if (typeof input.content !== "string") throw new Error("content must be a string.");
     if (Buffer.byteLength(input.content, "utf8") > CACHE_MAX_INLINE_BYTES) {
       throw new Error("Inline text cannot exceed 10 MB; use a Cloud Storage URI instead.");
     }
-    content = input.content;
-  } else {
-    if (typeof input.gcsUri !== "string" || !/^gs:\/\/[A-Za-z0-9._-]+\/.+/.test(input.gcsUri)) {
-      throw new Error("A valid gs:// Cloud Storage URI is required.");
-    }
-    if (typeof input.mimeType !== "string" || !/^[\w.+-]+\/[\w.+-]+$/.test(input.mimeType)) {
-      throw new Error("A valid MIME type is required for Cloud Storage content.");
-    }
-    gcsUri = input.gcsUri;
-    mimeType = input.mimeType;
+    if (input.content.trim()) content = input.content;
+  }
+  const files = validateCacheFiles(input.files);
+  if (!content && files.length === 0) {
+    throw new Error("Cached content requires inline text, a file, or both.");
   }
 
   const expirationMode = input.expirationMode;
@@ -151,10 +196,8 @@ export function validateCacheCreateRequest(
     region: input.region,
     ...(displayName ? { displayName } : {}),
     ...(systemInstruction ? { systemInstruction } : {}),
-    contentMode,
     ...(content ? { content } : {}),
-    ...(gcsUri ? { gcsUri } : {}),
-    ...(mimeType ? { mimeType } : {}),
+    ...(files.length ? { files } : {}),
     expirationMode,
     ...(ttlSeconds ? { ttlSeconds } : {}),
     ...(expireTime ? { expireTime } : {}),
@@ -241,6 +284,7 @@ export async function useContextCache(options: {
   prompt: string;
   temperature?: number;
   maxOutputTokens?: number;
+  thinkingLevel?: ThinkingLevel;
   fetchImpl?: FetchLike;
   now?: () => number;
 }): Promise<CacheUseResult> {
@@ -252,7 +296,8 @@ export async function useContextCache(options: {
     region,
     prompt,
     temperature = 0.2,
-    maxOutputTokens = 512,
+    maxOutputTokens = 2048,
+    thinkingLevel,
     fetchImpl = fetch,
     now = () => Date.now(),
   } = options;
@@ -263,7 +308,11 @@ export async function useContextCache(options: {
     body: JSON.stringify({
       cachedContent: name,
       contents: [{ role: "user", parts: [{ text: prompt }] }],
-      generationConfig: { temperature, maxOutputTokens },
+      generationConfig: {
+        temperature,
+        maxOutputTokens,
+        ...(thinkingLevel ? { thinkingConfig: { thinkingLevel } } : {}),
+      },
     }),
   });
   const value = await checkedJson(response) as {

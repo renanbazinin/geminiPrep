@@ -30,12 +30,15 @@ export function buildGenerateContentBody(request: ChatStreamRequest): Record<str
             ]),
       ],
     })),
-    ...(request.systemInstruction
+    // A cache carries its own system instruction, and Vertex rejects a second one alongside it.
+    ...(request.systemInstruction && !request.cachedContent
       ? { systemInstruction: { role: "system", parts: [{ text: request.systemInstruction }] } }
       : {}),
+    ...(request.cachedContent ? { cachedContent: request.cachedContent } : {}),
     generationConfig: {
       temperature: request.temperature,
       maxOutputTokens: request.maxOutputTokens,
+      ...(request.thinkingLevel ? { thinkingConfig: { thinkingLevel: request.thinkingLevel } } : {}),
     },
   };
 }

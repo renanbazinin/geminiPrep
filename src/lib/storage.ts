@@ -11,6 +11,9 @@ export const FALLBACK_SETTINGS: AppSettings = {
   systemInstruction: "",
   temperature: 1,
   maxOutputTokens: 8192,
+  thinkingLevel: "high",
+  cacheEnabled: false,
+  cacheTtlSeconds: 3600,
 };
 
 export function createId(): string {

@@ -2,6 +2,7 @@ import {
   ArrowUp,
   Check,
   Copy,
+  Database,
   FileJson,
   FileText,
   FileType2,
@@ -37,6 +38,7 @@ import {
   deleteAttachmentPayloads,
   processAttachment,
 } from "../lib/attachments";
+import { ensureSessionCache } from "../lib/chat-cache";
 import { createId } from "../lib/storage";
 
 const SUGGESTIONS = [
@@ -59,6 +61,11 @@ async function messageHistory(messages: ChatMessage[]): Promise<ChatStreamReques
         ? { files: await Promise.all(message.attachments.map(attachmentToRequestPart)) }
         : {}),
     })));
+}
+
+/** Files live in the cache, so the request must not carry them a second time. */
+function withoutFiles(messages: ChatStreamRequest["messages"]): ChatStreamRequest["messages"] {
+  return messages.map(({ files: _files, ...message }) => message);
 }
 
 function fileSize(bytes: number): string {
@@ -171,6 +178,7 @@ export function ChatPage() {
   const [processingFiles, setProcessingFiles] = useState(false);
   const [pendingAttachments, setPendingAttachments] = useState<ChatAttachment[]>([]);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
+  const [cacheNotice, setCacheNotice] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -370,6 +378,31 @@ export function ChatPage() {
     }
   }
 
+  /**
+   * Auto-creates (or reuses) a Vertex cache holding every file in the conversation.
+   * Returns the resource name to send, or undefined to run the request uncached.
+   */
+  async function resolveCache(messages: ChatStreamRequest["messages"]): Promise<string | undefined> {
+    if (!settings.cacheEnabled) return undefined;
+    const files = messages.flatMap((message) => message.files ?? []);
+    if (files.length === 0) return undefined;
+    const attempt = await ensureSessionCache({
+      settings,
+      project: config?.project ?? null,
+      files,
+    });
+    if (attempt.status === "hit") {
+      setCacheNotice(null);
+      return attempt.entry.name;
+    }
+    if (attempt.status === "created") {
+      setCacheNotice(`Created a context cache for ${files.length} file${files.length === 1 ? "" : "s"}. It expires in ${Math.round(settings.cacheTtlSeconds / 60)} minutes and is billed while stored.`);
+      return attempt.entry.name;
+    }
+    setCacheNotice(`Running without a cache: ${attempt.reason}`);
+    return undefined;
+  }
+
   async function startWithText(text: string) {
     const clean = text.trim() || (pendingAttachments.length > 0 ? "Please analyze the attached files." : "");
     if (!clean || running || preparing || processingFiles || !config) return;
@@ -383,6 +416,8 @@ export function ChatPage() {
       const files = attachments.length
         ? await Promise.all(attachments.map(attachmentToRequestPart))
         : undefined;
+      const messages = [...currentHistory, { role: "user" as const, content: clean, ...(files ? { files } : {}) }];
+      const cachedContent = await resolveCache(messages);
       const request: ChatStreamRequest = {
         provider: settings.provider,
         model: activeModel,
@@ -390,7 +425,9 @@ export function ChatPage() {
         systemInstruction: settings.systemInstruction,
         temperature: settings.temperature,
         maxOutputTokens: settings.maxOutputTokens,
-        messages: [...currentHistory, { role: "user", content: clean, ...(files ? { files } : {}) }],
+        thinkingLevel: settings.thinkingLevel,
+        ...(cachedContent ? { cachedContent } : {}),
+        messages: cachedContent ? withoutFiles(messages) : messages,
       };
       const debug = initialDebugTrace(request, now);
       const userMessage: ChatMessage = {
@@ -443,6 +480,8 @@ export function ChatPage() {
     setPreparing(true);
     setAttachmentError(null);
     try {
+      const messages = await messageHistory(baseMessages);
+      const cachedContent = await resolveCache(messages);
       const request: ChatStreamRequest = {
         provider: settings.provider,
         model: activeModel,
@@ -450,7 +489,9 @@ export function ChatPage() {
         systemInstruction: settings.systemInstruction,
         temperature: settings.temperature,
         maxOutputTokens: settings.maxOutputTokens,
-        messages: await messageHistory(baseMessages),
+        thinkingLevel: settings.thinkingLevel,
+        ...(cachedContent ? { cachedContent } : {}),
+        messages: cachedContent ? withoutFiles(messages) : messages,
       };
       const startedAt = new Date().toISOString();
       const debug = initialDebugTrace(request, startedAt);
@@ -552,6 +593,13 @@ export function ChatPage() {
       <div className="composer-wrap">
         {configError ? <div className="composer-alert">Server setup unavailable: {configError}</div> : null}
         {attachmentError ? <div className="composer-alert" role="alert">{attachmentError}</div> : null}
+        {cacheNotice ? (
+          <div className="composer-cache-notice">
+            <Database size={14} />
+            <span>{cacheNotice}</span>
+            <button type="button" className="text-button" onClick={() => setCacheNotice(null)}>Dismiss</button>
+          </div>
+        ) : null}
         {!configLoading && config && !providerReady ? (
           <div className="composer-alert">
             {config.providers[settings.provider].status}. <Link to="/settings">Review settings</Link>

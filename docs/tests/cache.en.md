@@ -87,7 +87,7 @@ The page’s request preview shows the actual field shape before creation.
 | `model` | Full publisher-model resource name. | No |
 | `displayName` | Human-readable label for discovery. | No |
 | `systemInstruction` | Instruction reused with every cache-backed request. | No |
-| `contents` | Inline text or `fileData` that forms the cached context. | No |
+| `contents` | The cached context, as a list of parts: `text`, `inlineData`, and `fileData` can be mixed in one request. | No |
 | `tools` / `toolConfig` | Optional reusable tool declarations and settings. The API supports them; this first lab does not expose editors for them. | No |
 | `ttl` | Duration from the time the request is processed, such as `3600s`. | Yes |
 | `expireTime` | Absolute RFC 3339 expiration timestamp. | Yes |
@@ -112,28 +112,40 @@ Example with inline text:
 }
 ```
 
-Example with a Cloud Storage object:
+Example mixing text with files. `parts` is an ordered list, so one cache can hold a study document, an uploaded PDF, and a Cloud Storage object at the same time:
 
 ```json
 {
   "model": "projects/PROJECT/locations/us-central1/publishers/google/models/gemini-3.6-flash",
   "contents": [{
     "role": "user",
-    "parts": [{
-      "fileData": {
-        "fileUri": "gs://BUCKET/manual.pdf",
-        "mimeType": "application/pdf"
+    "parts": [
+      { "text": "A sufficiently long shared document…" },
+      {
+        "inlineData": {
+          "mimeType": "application/pdf",
+          "data": "JVBERi0xLjcK…"
+        }
+      },
+      {
+        "fileData": {
+          "fileUri": "gs://BUCKET/manual.pdf",
+          "mimeType": "application/pdf"
+        }
       }
-    }]
+    ]
   }],
   "expireTime": "2026-08-14T15:30:00Z"
 }
 ```
 
+`inlineData` carries the file's bytes as base64 inside the request itself; `fileData` carries only a pointer to an object that already lives in Cloud Storage. Both end up as cached tokens, so both count toward the 4,096-token minimum.
+
 ## Size and storage rules
 
 - Gemini 3 explicit caches require at least 4,096 input tokens according to the current overview.
 - Inline/blob/text cached content is limited to 10 MB.
+- Base64 `inlineData` inflates the file by about a third and must fit in one request; the lab caps it at 15 MB per create call.
 - Use Cloud Storage for larger content.
 - The exact usable media formats and limits also depend on the model.
 - A cache belongs to one project and location. Use it through a compatible model endpoint in that location.
@@ -165,6 +177,20 @@ Also compare:
 - `promptTokenCount`: all input tokens considered by the request.
 - `candidatesTokenCount`: output tokens.
 - `totalTokenCount`: total usage reported by the provider.
+- `thoughtsTokenCount`: Gemini 3 thinking tokens. These are drawn from `maxOutputTokens` but are *not* included in `candidatesTokenCount`, so a reply can stop at `MAX_TOKENS` after only a handful of visible tokens. Add the two together before concluding your budget is large enough, or lower `thinkingLevel`.
+
+## Using the cache from chat
+
+**Settings → Context cache** turns this on for ordinary conversations. When a chat carries files, the app fingerprints the material (model, location, system instruction, and every file) and:
+
+1. reuses a live cache with that fingerprint, or
+2. creates one, storing its resource name and `expireTime` in this browser's local registry.
+
+Requests then send `cachedContent` plus the new turn only. The files and the system instruction are deliberately dropped from the request body, because the cache already holds them and Vertex rejects a duplicate system instruction.
+
+Because cached content is immutable, anything that changes the fingerprint — switching model, changing the system instruction, attaching another file — produces a *new* cache. The old one keeps billing until its TTL runs out, so the Settings list shows every live cache with a countdown and a delete button. Entries vanish from the list once they expire, since Vertex has already stopped serving and billing them.
+
+The lab's own generate step and chat share one `thinkingLevel` setting, which is sent as `generationConfig.thinkingConfig.thinkingLevel`.
 
 ## Updating expiration
 

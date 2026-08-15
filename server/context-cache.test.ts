@@ -4,6 +4,7 @@ import type { CacheCreateRequest } from "../shared/contracts.js";
 import { createApp } from "./app.js";
 import {
   CACHE_MAX_INLINE_BYTES,
+  CACHE_MAX_INLINE_FILE_BYTES,
   buildCacheCreateBody,
   cacheCollectionUrl,
   cacheResourceUrl,
@@ -24,7 +25,6 @@ function request(overrides: Partial<CacheCreateRequest> = {}): CacheCreateReques
   return {
     model: "gemini-3.6-flash",
     region: "global",
-    contentMode: "text",
     content: "A long learning document",
     expirationMode: "ttl",
     ttlSeconds: 3600,
@@ -80,10 +80,8 @@ describe("cache create requests", () => {
       project: "study-project",
       request: request({
         region: "us-central1",
-        contentMode: "gcs",
         content: undefined,
-        gcsUri: "gs://study-bucket/manual.pdf",
-        mimeType: "application/pdf",
+        files: [{ kind: "gcs", name: "manual.pdf", mimeType: "application/pdf", fileUri: "gs://study-bucket/manual.pdf" }],
         expirationMode: "expireTime",
         ttlSeconds: undefined,
         expireTime: "2099-01-01T00:00:00.000Z",
@@ -103,6 +101,65 @@ describe("cache create requests", () => {
     expect(value).not.toHaveProperty("ttl");
   });
 
+  it("appends file parts after the inline text in one user content", () => {
+    expect(buildCacheCreateBody({
+      project: "study-project",
+      request: request({
+        files: [
+          { kind: "inlineData", name: "report.pdf", mimeType: "application/pdf", data: "JVBERi0xCg==" },
+          { kind: "gcs", name: "manual.pdf", mimeType: "application/pdf", fileUri: "gs://study-bucket/manual.pdf" },
+          { kind: "text", name: "notes.md", mimeType: "text/markdown", text: "Rule 7 applies." },
+        ],
+      }),
+    })).toMatchObject({
+      contents: [{
+        role: "user",
+        parts: [
+          { text: "A long learning document" },
+          { inlineData: { mimeType: "application/pdf", data: "JVBERi0xCg==" } },
+          { fileData: { fileUri: "gs://study-bucket/manual.pdf", mimeType: "application/pdf" } },
+          { text: "\n\n--- Cached file: notes.md (text/markdown) ---\nRule 7 applies.\n--- End cached file: notes.md ---" },
+        ],
+      }],
+    });
+  });
+
+  it("caches files with no inline text at all", () => {
+    const value = buildCacheCreateBody({
+      project: "study-project",
+      request: request({
+        content: undefined,
+        files: [{ kind: "gcs", name: "manual.pdf", mimeType: "application/pdf", fileUri: "gs://study-bucket/manual.pdf" }],
+      }),
+    });
+    expect(value).toMatchObject({
+      contents: [{ role: "user", parts: [{ fileData: { fileUri: "gs://study-bucket/manual.pdf" } }] }],
+    });
+  });
+
+  it.each([
+    [[{ kind: "inlineData", name: "s.pptx", mimeType: "application/zip", data: "eA==" }], "must be a PDF"],
+    [[{ kind: "text", name: "notes.md", mimeType: "text/markdown", text: "   " }], "requires text"],
+    [[{ kind: "gcs", name: "", mimeType: "application/pdf", fileUri: "gs://b/o.pdf" }], "requires a name"],
+    [[{ kind: "video", name: "clip.mp4", mimeType: "video/mp4" }], "kind must be gcs, inlineData, or text"],
+    [Array.from({ length: 11 }, () => ({ kind: "gcs", name: "o.pdf", mimeType: "application/pdf", fileUri: "gs://b/o.pdf" })), "more than 10 files"],
+  ])("rejects invalid file parts: %s", (files, message) => {
+    expect(() => validateCacheCreateRequest({ ...request(), files }, { modelIds: models, regionIds: regions }))
+      .toThrow(message);
+  });
+
+  it("rejects inline files above the request transport limit", () => {
+    expect(() => validateCacheCreateRequest({
+      ...request(),
+      files: [{
+        kind: "inlineData",
+        name: "huge.pdf",
+        mimeType: "application/pdf",
+        data: "A".repeat(Math.ceil(CACHE_MAX_INLINE_FILE_BYTES * 4 / 3) + 4),
+      }],
+    }, { modelIds: models, regionIds: regions })).toThrow("exceed 15 MB");
+  });
+
   it("normalizes a valid text request", () => {
     expect(validateCacheCreateRequest({
       ...request(),
@@ -120,7 +177,8 @@ describe("cache create requests", () => {
     [{ ...request(), region: "moon-1" }, "configured cache location"],
     [{ ...request(), ttlSeconds: 59 }, "at least 60"],
     [{ ...request(), expirationMode: "expireTime", expireTime: "not-a-date" }, "valid expireTime"],
-    [{ ...request(), contentMode: "gcs", content: undefined, gcsUri: "https://example.test/file", mimeType: "application/pdf" }, "valid gs://"],
+    [{ ...request(), content: undefined, files: [{ kind: "gcs", name: "f.pdf", mimeType: "application/pdf", fileUri: "https://example.test/file" }] }, "valid gs://"],
+    [{ ...request(), content: undefined, files: [] }, "requires inline text, a file, or both"],
     [{ ...request(), kmsKeyName: "projects/p/locations/global/keyRings/r/cryptoKeys/k" }, "not supported with the global"],
   ])("rejects invalid input: %s", (input, message) => {
     expect(() => validateCacheCreateRequest(input, { modelIds: models, regionIds: regions }))
