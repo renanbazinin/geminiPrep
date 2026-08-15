@@ -1,7 +1,19 @@
 node_modules/
 dist/
 dist-server/
-.env
-*.local
-coverage/
 
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+*.local
+application_default_credentials.json
+credentials*.json
+client_secret_*.json
+service-account*.json
+*.pem
+*.key
+*.p12
+*.pfx
+
+coverage/
