@@ -12,6 +12,7 @@ const MAX_SYSTEM_CHARACTERS = 20_000;
 const MAX_FILES_PER_MESSAGE = 10;
 const MAX_FILES_PER_REQUEST = 30;
 const MAX_TOTAL_INLINE_DATA_CHARACTERS = 28_000_000;
+const CACHED_CONTENT_PATTERN = /^projects\/[A-Za-z0-9._-]+\/locations\/([a-z0-9-]+)\/cachedContents\/[A-Za-z0-9_-]+$/;
 
 function isRole(value: unknown): value is MessageRole {
   return value === "user" || value === "assistant";
@@ -54,6 +55,27 @@ export function validateChatRequest(
   const maxOutputTokens = Number(input.maxOutputTokens);
   if (!Number.isInteger(maxOutputTokens) || maxOutputTokens < 1 || maxOutputTokens > 65_536) {
     fail("maxOutputTokens must be an integer between 1 and 65536.");
+  }
+
+  let thinkingLevel: "low" | "high" | undefined;
+  if (input.thinkingLevel !== undefined) {
+    if (input.thinkingLevel !== "low" && input.thinkingLevel !== "high") {
+      fail("thinkingLevel must be low or high.");
+    }
+    thinkingLevel = input.thinkingLevel;
+  }
+
+  let cachedContent: string | undefined;
+  if (input.cachedContent !== undefined && input.cachedContent !== "") {
+    if (providerId !== "vertex") fail("cachedContent is only supported on Vertex AI.");
+    if (typeof input.cachedContent !== "string" || !CACHED_CONTENT_PATTERN.test(input.cachedContent)) {
+      fail("cachedContent must be a cachedContents resource name.");
+    }
+    const cacheRegion = CACHED_CONTENT_PATTERN.exec(input.cachedContent)?.[1];
+    if (cacheRegion !== region) {
+      fail(`cachedContent lives in ${cacheRegion}, which does not match the request region ${region}.`);
+    }
+    cachedContent = input.cachedContent;
   }
 
   const systemInstruction = typeof input.systemInstruction === "string"
@@ -143,6 +165,8 @@ export function validateChatRequest(
     ...(systemInstruction ? { systemInstruction } : {}),
     temperature,
     maxOutputTokens,
+    ...(thinkingLevel ? { thinkingLevel } : {}),
+    ...(cachedContent ? { cachedContent } : {}),
     messages,
   };
 }

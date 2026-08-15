@@ -134,6 +134,9 @@ export type Conversation = {
   messages: ChatMessage[];
 };
 
+/** Gemini 3 reasoning depth. Thinking tokens are billed against maxOutputTokens. */
+export type ThinkingLevel = "low" | "high";
+
 export type AppSettings = {
   version: 1;
   provider: ProviderId;
@@ -142,6 +145,23 @@ export type AppSettings = {
   systemInstruction: string;
   temperature: number;
   maxOutputTokens: number;
+  thinkingLevel: ThinkingLevel;
+  /** When on, chat auto-creates a billable Vertex cache from the conversation's files. */
+  cacheEnabled: boolean;
+  cacheTtlSeconds: number;
+};
+
+/** A cache this browser created, tracked locally so chat can reuse it until it expires. */
+export type StoredCacheEntry = {
+  name: string;
+  displayName?: string;
+  model: string;
+  region: string;
+  /** Fingerprint of the cached material, so identical material reuses one cache. */
+  signature: string;
+  createdAt: string;
+  expireTime: string;
+  cachedTokens?: number;
 };
 
 export type ProviderConfig = {
@@ -172,6 +192,9 @@ export type ChatStreamRequest = {
   systemInstruction?: string;
   temperature: number;
   maxOutputTokens: number;
+  thinkingLevel?: ThinkingLevel;
+  /** Full cachedContents resource name. Its content is prepended by Vertex, so never resend it. */
+  cachedContent?: string;
   messages: ChatStreamRequestMessage[];
 };
 
@@ -229,8 +252,13 @@ export type RegionTestConfig = {
 
 export type TestLanguage = "en" | "he";
 
-export type CacheContentMode = "text" | "gcs";
 export type CacheExpirationMode = "ttl" | "expireTime";
+
+/** One extra part appended to the cached `contents` alongside the inline study text. */
+export type CacheFilePart =
+  | { kind: "gcs"; name: string; mimeType: string; fileUri: string }
+  | { kind: "inlineData"; name: string; mimeType: string; data: string }
+  | { kind: "text"; name: string; mimeType: string; text: string };
 
 export type CacheUsageMetadata = {
   totalTokenCount?: number;
@@ -275,10 +303,8 @@ export type CacheCreateRequest = {
   region: string;
   displayName?: string;
   systemInstruction?: string;
-  contentMode: CacheContentMode;
   content?: string;
-  gcsUri?: string;
-  mimeType?: string;
+  files?: CacheFilePart[];
   expirationMode: CacheExpirationMode;
   ttlSeconds?: number;
   expireTime?: string;
