@@ -123,6 +123,14 @@ export function resolveCacheModels(): ModelOption[] {
   return extendCatalog(ids, VERTEX_MODELS, (id) => ({ id, label: id, family: modelFamily(id) }));
 }
 
+export function resolveImplicitCacheModels(): ModelOption[] {
+  const seen = new Map<string, ModelOption>();
+  for (const model of [...resolveVertexChatModels(), ...resolveCacheModels()]) {
+    seen.set(model.id, model);
+  }
+  return [...seen.values()];
+}
+
 export function resolveDefaultRegionIds(): string[] {
   return envIdList("VERTEX_PROBE_DEFAULT_REGIONS")
     ?? envIdList("VERTEX_PROBE_REGIONS")

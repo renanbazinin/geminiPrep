@@ -3,6 +3,8 @@ import type {
   CachedContentResource,
   CacheFilePart,
   CacheUseResult,
+  ImplicitCacheCall,
+  ImplicitCacheProbeResult,
   ThinkingLevel,
 } from "../shared/contracts.js";
 import { vertexGenerateContentUrl, vertexHost } from "./region-probe.js";
@@ -275,6 +277,44 @@ export async function deleteContextCache(options: {
   if (!response.ok) throw apiError(await responseJson(response), response.status);
 }
 
+async function generateContent(options: {
+  token: string;
+  project: string;
+  model: string;
+  region: string;
+  body: Record<string, unknown>;
+  fetchImpl: FetchLike;
+  now: () => number;
+}): Promise<{
+  text: string;
+  latencyMs: number;
+  finishReason?: string;
+  responseId?: string;
+  usageMetadata?: CacheUseResult["usageMetadata"];
+}> {
+  const startedAt = options.now();
+  const response = await options.fetchImpl(
+    vertexGenerateContentUrl({ project: options.project, region: options.region, model: options.model }),
+    { method: "POST", headers: authHeaders(options.token), body: JSON.stringify(options.body) },
+  );
+  const value = await checkedJson(response) as {
+    candidates?: Array<{ content?: { parts?: Array<{ text?: unknown }> }; finishReason?: string }>;
+    usageMetadata?: CacheUseResult["usageMetadata"];
+    responseId?: string;
+  };
+  const text = (value.candidates ?? [])
+    .flatMap((candidate) => candidate.content?.parts ?? [])
+    .map((part) => typeof part.text === "string" ? part.text : "")
+    .join("");
+  return {
+    text,
+    latencyMs: options.now() - startedAt,
+    finishReason: value.candidates?.[0]?.finishReason,
+    responseId: value.responseId,
+    usageMetadata: value.usageMetadata,
+  };
+}
+
 export async function useContextCache(options: {
   token: string;
   project: string;
@@ -301,11 +341,14 @@ export async function useContextCache(options: {
     fetchImpl = fetch,
     now = () => Date.now(),
   } = options;
-  const startedAt = now();
-  const response = await fetchImpl(vertexGenerateContentUrl({ project, region, model }), {
-    method: "POST",
-    headers: authHeaders(token),
-    body: JSON.stringify({
+  const generated = await generateContent({
+    token,
+    project,
+    model,
+    region,
+    fetchImpl,
+    now,
+    body: {
       cachedContent: name,
       contents: [{ role: "user", parts: [{ text: prompt }] }],
       generationConfig: {
@@ -313,23 +356,64 @@ export async function useContextCache(options: {
         maxOutputTokens,
         ...(thinkingLevel ? { thinkingConfig: { thinkingLevel } } : {}),
       },
-    }),
+    },
   });
-  const value = await checkedJson(response) as {
-    candidates?: Array<{ content?: { parts?: Array<{ text?: unknown }> }; finishReason?: string }>;
-    usageMetadata?: CacheUseResult["usageMetadata"];
-    responseId?: string;
-  };
-  const text = (value.candidates ?? [])
-    .flatMap((candidate) => candidate.content?.parts ?? [])
-    .map((part) => typeof part.text === "string" ? part.text : "")
-    .join("");
+  return { ...generated, request: { model, region, cachedContent: name, prompt } };
+}
+
+export async function probeImplicitCache(options: {
+  token: string;
+  project: string;
+  model: string;
+  region: string;
+  prefix: string;
+  questions: [string, string];
+  fetchImpl?: FetchLike;
+  now?: () => number;
+}): Promise<ImplicitCacheProbeResult> {
+  const {
+    token,
+    project,
+    model,
+    region,
+    prefix,
+    questions,
+    fetchImpl = fetch,
+    now = () => Date.now(),
+  } = options;
+  const sequence = [questions[0], questions[1], questions[0], questions[1]];
+  const calls: ImplicitCacheCall[] = [];
+  for (const question of sequence) {
+    const generated = await generateContent({
+      token,
+      project,
+      model,
+      region,
+      fetchImpl,
+      now,
+      body: {
+        systemInstruction: { parts: [{ text: prefix }] },
+        contents: [{ role: "user", parts: [{ text: question }] }],
+        generationConfig: {
+          temperature: 0,
+          maxOutputTokens: 256,
+          ...(model.startsWith("gemini-3") ? { thinkingConfig: { thinkingLevel: "low" } } : {}),
+        },
+      },
+    });
+    calls.push({ question, ...generated });
+  }
+  if (calls.length !== 4) throw new Error("Implicit cache probe did not complete all four requests.");
+  const cachedTokens = Math.max(
+    0,
+    ...calls.map((call) => Number(call.usageMetadata?.cachedContentTokenCount ?? 0)),
+  );
   return {
-    text,
-    latencyMs: now() - startedAt,
-    finishReason: value.candidates?.[0]?.finishReason,
-    responseId: value.responseId,
-    usageMetadata: value.usageMetadata,
-    request: { model, region, cachedContent: name, prompt },
+    model,
+    region,
+    prefixCharacters: prefix.length,
+    calls,
+    cachedTokens: Number.isFinite(cachedTokens) ? cachedTokens : 0,
+    hit: Number.isFinite(cachedTokens) && cachedTokens > 0,
   };
 }

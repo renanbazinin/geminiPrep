@@ -16,15 +16,17 @@ most common source of wrong design decisions.
 
 | | Implicit caching | Explicit caching |
 | --- | --- | --- |
-| Who triggers it | The service, automatically | You, with a `cachedContents` resource |
+| Who triggers it | The service, automatically. Enabled by default on every Google Cloud project; there is no request flag | You, with a `cachedContents` resource |
 | What it matches | A shared **prefix** with a recent request | A named resource you created |
-| Guarantee | Best-effort. No promise of a hit | Deterministic. The content is there until it expires |
-| You manage | Nothing | Creation, expiration, deletion, billing |
-| Proof of a hit | `cachedContentTokenCount`, when it happens | `cachedContentTokenCount`, always |
-| Cost | Free discount when it hits | Discounted input tokens **plus** storage billed over time |
+| Guarantee | Best-effort. Eligible on every supported call; no promise of a hit | Deterministic. The content is there until it expires |
+| You manage | Nothing. Do not “turn it on” in chat code | Creation, expiration, deletion, billing |
+| Proof of a hit | `cachedContentTokenCount`, when it happens. Missing or `0` is a miss, not “disabled” | `cachedContentTokenCount`, always |
+| Cost | Free discount when it hits. No storage bill | Discounted input tokens **plus** storage billed over time |
 
-The practical consequence: **implicit caching already handles the growing conversation prefix for
-free.** Explicit caching is for the large, stable blob you want a guaranteed, provable hit on.
+The practical consequence: **implicit caching is the mechanism that *may* discount the growing
+conversation prefix, for free, with no resource to manage.** Explicit caching is for the large,
+stable blob you want a guaranteed, provable hit on. Auto-enabled is not the same as “every
+follow-up will show cached tokens.”
 
 ## 2. The five constraints that drive every decision
 
@@ -87,13 +89,20 @@ caching of a per-turn-changing prefix is a net negative in almost every case.
 ### The thing that already solves it
 
 Implicit caching matches on a shared prefix with a recent request — which is precisely the shape of
-a chat conversation: identical history, one new turn appended. You get the discount automatically,
-with no resource to create, track, expire, or delete.
+a chat conversation: identical history, one new turn appended. You do not create, track, expire, or
+delete anything. The service is already allowed to reuse that prefix.
+
+That is the whole chat implementation for implicit: keep the large stable text first (a
+`systemInstruction` or the first user part), resend the same history prefix on every turn, stay
+above the Gemini 3 minimum of ~4,096 tokens, and read `cachedContentTokenCount`. The first turn
+usually writes. A later turn *can* hit. Gemini 3 often needs a third call before the field appears.
+A miss after a correct prefix is normal.
 
 So the split is not arbitrary:
 
 - **Explicit cache** → the big immutable blob (files + system instruction). Guaranteed, provable.
-- **Implicit cache** → the growing conversation prefix. Free, automatic, best-effort.
+- **Implicit cache** → the growing conversation prefix. Free, automatic, best-effort. Do not
+  implement an “enable implicit” switch.
 
 ### The one exception
 
@@ -220,9 +229,12 @@ usageMetadata.cachedContentTokenCount
 A positive value is the provider's own evidence that cached input was used. Latency is not proof —
 network variance, capacity, and output length move it around far more than a cache hit does.
 
-Expect `cachedContentTokenCount` to stay flat at the cached total while `promptTokenCount` grows
-each turn. That gap is the conversation history, and seeing it behave that way confirms the split in
-§4 is working as designed.
+When an **explicit** cache is attached, expect `cachedContentTokenCount` to stay near the stored
+total while `promptTokenCount` grows each turn. That gap is the conversation history, and seeing it
+behave that way confirms the split in §4 is working as designed.
+
+When the request has **no** `cachedContent` field, a positive count is an implicit hit. The field
+may be omitted entirely. That does not mean implicit caching is off. It means this turn missed.
 
 ### 5.6 Handle expiry as a normal event, not an error
 
@@ -279,6 +291,8 @@ the two counts before concluding a budget is large enough, and either raise `max
 - [ ] Region of the cache validated against the region of the request
 - [ ] Failed creates remembered per-signature, not retried per-message
 - [ ] `cachedContentTokenCount` surfaced in the UI as hit evidence
+- [ ] Implicit misses labeled as misses, not as “cache not requested”
+- [ ] Large stable chat context placed first (`systemInstruction` or first part)
 - [ ] Live caches listed with TTL countdown and delete
 - [ ] `thoughtsTokenCount` added to output accounting
 

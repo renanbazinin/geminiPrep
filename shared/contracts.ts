@@ -284,9 +284,11 @@ export type CacheTestConfig = {
   projectSource: "env" | "request" | null;
   needsProject: boolean;
   models: ModelOption[];
+  implicitModels: ModelOption[];
   regions: RegionOption[];
   defaults: {
     model: string;
+    implicitModel: string;
     region: string;
     ttlSeconds: number;
   };
@@ -323,4 +325,22 @@ export type CacheUseResult = {
     cachedContent: string;
     prompt: string;
   };
+};
+
+export type ImplicitCacheCall = {
+  question: string;
+  text: string;
+  latencyMs: number;
+  finishReason?: string;
+  responseId?: string;
+  usageMetadata?: Record<string, unknown> & { cachedContentTokenCount?: number };
+};
+
+export type ImplicitCacheProbeResult = {
+  model: string;
+  region: string;
+  prefixCharacters: number;
+  calls: ImplicitCacheCall[];
+  cachedTokens: number;
+  hit: boolean;
 };

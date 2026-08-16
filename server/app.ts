@@ -4,6 +4,7 @@ import express from "express";
 import {
   resolveDefaultRegionIds,
   resolveCacheModels,
+  resolveImplicitCacheModels,
   resolveProbeModels,
   resolveProbeRegions,
   resolveVertexChatModels,
@@ -31,6 +32,7 @@ import {
   getContextCache,
   listContextCaches,
   parseCacheName,
+  probeImplicitCache,
   updateContextCacheExpiration,
   useContextCache,
   validateCacheCreateRequest,
@@ -102,6 +104,7 @@ export function createApp(options: {
   app.get("/api/tests/cache/config", (_req, res) => {
     const { project, source } = resolveVertexProject(null);
     const models = resolveCacheModels();
+    const implicitModels = resolveImplicitCacheModels();
     const regions = resolveProbeRegions();
     const preferredRegion = process.env.VERTEX_CACHE_DEFAULT_REGION || "global";
     res.json({
@@ -109,9 +112,12 @@ export function createApp(options: {
       projectSource: source,
       needsProject: project === null,
       models,
+      implicitModels,
       regions,
       defaults: {
         model: models.find((model) => model.id === "gemini-3.6-flash")?.id ?? models[0]?.id,
+        implicitModel: implicitModels.find((model) => model.id === "gemini-3.7-flash")?.id
+          ?? implicitModels[0]?.id,
         region: regions.some((region) => region.id === preferredRegion)
           ? preferredRegion
           : regions[0]?.id,
@@ -242,6 +248,42 @@ export function createApp(options: {
         ...(req.body?.thinkingLevel === "low" || req.body?.thinkingLevel === "high"
           ? { thinkingLevel: req.body.thinkingLevel }
           : {}),
+        fetchImpl: options.fetchImpl,
+      }));
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  app.post("/api/tests/cache/implicit", async (req, res) => {
+    try {
+      const model = typeof req.body?.model === "string" ? req.body.model : "";
+      if (!resolveImplicitCacheModels().some((entry) => entry.id === model)) {
+        throw new Error("Choose a configured model that supports implicit caching.");
+      }
+      const region = typeof req.body?.region === "string" ? req.body.region : "";
+      if (!resolveProbeRegions().some((entry) => entry.id === region)) {
+        throw new Error("Choose a configured cache location.");
+      }
+      const prefix = typeof req.body?.prefix === "string" ? req.body.prefix.trim() : "";
+      if (!prefix) throw new Error("A shared prefix is required to probe implicit caching.");
+      if (prefix.length > 400_000) throw new Error("Prefix cannot exceed 400,000 characters.");
+      const questionOne = typeof req.body?.questionOne === "string" ? req.body.questionOne.trim() : "";
+      const questionTwo = typeof req.body?.questionTwo === "string" ? req.body.questionTwo.trim() : "";
+      if (!questionOne || !questionTwo) throw new Error("Two different follow-up questions are required.");
+      if (questionOne.length > 4_000 || questionTwo.length > 4_000) {
+        throw new Error("Each follow-up question must be at most 4,000 characters.");
+      }
+      const { project } = resolveVertexProject(req.body?.project);
+      if (!project) throw new Error("No Google Cloud project is configured for the cache test.");
+      const token = await getCacheAccessToken();
+      res.json(await probeImplicitCache({
+        token,
+        project,
+        model,
+        region,
+        prefix,
+        questions: [questionOne, questionTwo],
         fetchImpl: options.fetchImpl,
       }));
     } catch (error) {

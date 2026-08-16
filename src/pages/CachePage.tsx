@@ -24,6 +24,7 @@ import type {
   CacheTestConfig,
   CacheUseResult,
   CachedContentResource,
+  ImplicitCacheProbeResult,
 } from "../../shared/contracts";
 import { MarkdownMessage } from "../components/MarkdownMessage";
 import { TestLanguageToggle } from "../components/TestLanguageToggle";
@@ -65,6 +66,12 @@ const copy = {
     evidence: "Cache-hit evidence", cachedTokens: "Cached input tokens", promptTokens: "Prompt tokens", outputTokens: "Output tokens", totalTokens: "Total tokens", latency: "Latency", noEvidence: "The provider did not return cachedContentTokenCount. Check model support, minimum tokens, and whether the cache was referenced.",
     response: "Model response", learn: "What this demonstrates", learning: ["The cache content and model are fixed when created.", "TTL or expireTime can be updated while the cache is unexpired.", "cachedContentTokenCount is the authoritative cache-hit signal.", "Deleting early stops future storage time; an expired resource must be recreated."],
     readiness: "Series 3 notes", notes: "The default list follows Google's explicit-cache support table. Gemini 3 caches require at least 4,096 tokens; some preview models have different implicit-cache thresholds.",
+    implicitEyebrow: "No cache resource", implicitTitle: "See implicit cache",
+    implicitHelp: "Vertex may reuse a matching prefix automatically. This sends four generateContent calls: the large document is the systemInstruction, and the two questions alternate. A hit is proven only by usageMetadata.cachedContentTokenCount — it is best-effort, so a miss is a valid result.",
+    implicitModel: "Model for implicit probe", implicitRun: "Send four prefix-matched requests", implicitRunning: "Probing implicit cache…",
+    implicitQ1: "First question", implicitQ2: "Second question",
+    implicitCall: "Request", implicitMiss: "No cachedContentTokenCount on any of the four calls. Implicit caching did not hit this time.",
+    implicitHit: "Implicit cache hit", implicitNote: "Request 1 usually writes the prefix. Later requests can hit. Gemini 3 often needs a third call. There is no CachedContent name and no storage bill.",
   },
   he: {
     back: "כל הבדיקות", eyebrow: "GEMINI 3 · מטמון הקשר מפורש", title: "מעבדת מטמון הקשר",
@@ -93,6 +100,12 @@ const copy = {
     evidence: "הוכחת פגיעה במטמון", cachedTokens: "טוקנים מהמטמון", promptTokens: "טוקנים בפרומפט", outputTokens: "טוקנים בפלט", totalTokens: "סך הכול טוקנים", latency: "זמן תגובה", noEvidence: "הספק לא החזיר cachedContentTokenCount. בדוק תמיכת מודל, מינימום טוקנים והפניה נכונה למטמון.",
     response: "תשובת המודל", learn: "מה הניסוי מדגים", learning: ["תוכן המטמון והמודל נקבעים בזמן היצירה.", "אפשר לעדכן TTL או expireTime כל עוד המטמון לא פג.", "cachedContentTokenCount הוא האות המוסמך לפגיעת מטמון.", "מחיקה מוקדמת מפסיקה אחסון עתידי; משאב שפג צריך ליצור מחדש."],
     readiness: "הערות לסדרה 3", notes: "רשימת ברירת המחדל מבוססת על טבלת התמיכה של Google במטמון מפורש. מטמוני Gemini 3 דורשים לפחות 4,096 טוקנים; לחלק ממודלי התצוגה המקדימה יש סף אחר במטמון משתמע.",
+    implicitEyebrow: "בלי משאב מטמון", implicitTitle: "לראות מטמון משתמע",
+    implicitHelp: "Vertex עשוי למחזר קידומת תואמת אוטומטית. כאן נשלחות ארבע קריאות generateContent: המסמך הגדול הוא systemInstruction, ושתי השאלות מתחלפות. פגיעה מוכחת רק על ידי usageMetadata.cachedContentTokenCount — זה best-effort, ופספוס הוא תוצאה תקינה.",
+    implicitModel: "מודל לבדיקת מטמון משתמע", implicitRun: "שליחת ארבע בקשות עם אותה קידומת", implicitRunning: "בודקת מטמון משתמע…",
+    implicitQ1: "שאלה ראשונה", implicitQ2: "שאלה שנייה",
+    implicitCall: "בקשה", implicitMiss: "אין cachedContentTokenCount באף אחת מארבע הקריאות. המטמון המשתמע לא פגע הפעם.",
+    implicitHit: "פגיעת מטמון משתמע", implicitNote: "בקשה 1 בדרך כלל כותבת את הקידומת. הבקשות הבאות יכולות לפגוע. ב־Gemini 3 לעיתים צריך קריאה שלישית. אין שם CachedContent ואין חיוב אחסון.",
   },
 } as const;
 
@@ -112,6 +125,12 @@ function defaultDisplayName(): string {
   return `gemini-prep-${new Date().toISOString().slice(0, 10)}`;
 }
 
+function implicitQuestions(language: "en" | "he"): [string, string] {
+  return language === "he"
+    ? ["צטט את סעיף 1 במשפט אחד.", "צטט את סעיף 2 במשפט אחד."]
+    : ["Cite section 1 in one sentence.", "Cite section 2 in one sentence."];
+}
+
 function localDateTime(hoursFromNow = 1): string {
   const date = new Date(Date.now() + hoursFromNow * 3_600_000);
   const offset = date.getTimezoneOffset() * 60_000;
@@ -122,7 +141,7 @@ function sampleContext(language: "en" | "he"): string {
   const intro = language === "he"
     ? "מסמך לימוד פנימי: מדיניות הפעלה של עוזר ארגוני. יש לענות רק לפי העובדות במסמך ולציין את מספר הסעיף."
     : "Internal learning document: enterprise assistant operating policy. Answer only from this document and cite the section number.";
-  const sections = Array.from({ length: 105 }, (_, index) => language === "he"
+  const sections = Array.from({ length: 140 }, (_, index) => language === "he"
     ? `סעיף ${index + 1}: כל בקשת מודל חייבת לתעד מודל, אזור, מזהה תגובה וזמן תגובה. מידע רגיש נשאר בגבולות הפרויקט. שינויי תצורה נבדקים בסביבת הכנה לפני הפעלה. בעלי השירות בודקים שגיאות, מכסה ועלויות פעם ביום.`
     : `Section ${index + 1}: Every model request must record its model, region, response identifier, and latency. Sensitive information remains inside the project boundary. Configuration changes are tested in a preparation environment before activation. Service owners review errors, quota, and cost once per day.`);
   return [intro, ...sections].join("\n\n");
@@ -160,6 +179,7 @@ export function CachePage() {
   const [config, setConfig] = useState<CacheTestConfig | null>(null);
   const [project, setProject] = useState("");
   const [model, setModel] = useState("");
+  const [implicitModel, setImplicitModel] = useState("");
   const [region, setRegion] = useState("global");
   const [displayName, setDisplayName] = useState(defaultDisplayName);
   const [systemInstruction, setSystemInstruction] = useState("");
@@ -175,7 +195,10 @@ export function CachePage() {
   const [resource, setResource] = useState<CachedContentResource | null>(null);
   const [caches, setCaches] = useState<CachedContentResource[] | null>(null);
   const [prompt, setPrompt] = useState(language === "he" ? "מהי תדירות בדיקת העלויות?" : "How often must service owners review cost?");
+  const [questionOne, setQuestionOne] = useState(() => implicitQuestions(language)[0]);
+  const [questionTwo, setQuestionTwo] = useState(() => implicitQuestions(language)[1]);
   const [useResult, setUseResult] = useState<CacheUseResult | null>(null);
+  const [implicitResult, setImplicitResult] = useState<ImplicitCacheProbeResult | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -192,6 +215,7 @@ export function CachePage() {
         setConfig(value);
         setProject(value.project ?? "");
         setModel(value.defaults.model);
+        setImplicitModel(value.defaults.implicitModel);
         setRegion(value.defaults.region);
         setTtlSeconds(value.defaults.ttlSeconds);
       })
@@ -203,6 +227,9 @@ export function CachePage() {
 
   useEffect(() => {
     setPrompt(language === "he" ? "מהי תדירות בדיקת העלויות?" : "How often must service owners review cost?");
+    const [first, second] = implicitQuestions(language);
+    setQuestionOne(first);
+    setQuestionTwo(second);
   }, [language]);
 
   useEffect(() => {
@@ -349,6 +376,26 @@ export function CachePage() {
     }
   }
 
+  async function probeImplicit() {
+    const prefix = content.trim() || sampleContext(language);
+    if (!content.trim()) setContent(prefix);
+    prepareAction("implicit");
+    try {
+      setImplicitResult(await cachePost<ImplicitCacheProbeResult>("implicit", {
+        project,
+        model: implicitModel,
+        region,
+        prefix,
+        questionOne,
+        questionTwo,
+      }));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function generateWithCache() {
     if (!resource) return;
     prepareAction("use");
@@ -418,6 +465,54 @@ export function CachePage() {
       </header>
 
       <div className="cache-billing-warning"><AlertTriangle size={19} /><div><strong>{t.warningTitle}</strong><p>{t.warning}</p></div></div>
+
+      <section className="test-panel">
+        <div className="test-panel-heading">
+          <div><span className="step-number">0</span><div><h2>{t.implicitTitle}</h2><p>{t.implicitEyebrow}</p></div></div>
+          <span className="series-badge">Implicit</span>
+        </div>
+        <p className="implicit-help">{t.implicitHelp}</p>
+        <div className="cache-fields-grid">
+          <label className="form-field">
+            <span>{t.implicitModel}</span>
+            <select value={implicitModel} onChange={(event) => setImplicitModel(event.target.value)}>
+              {(config?.implicitModels ?? config?.models ?? []).map((entry) => (
+                <option key={entry.id} value={entry.id}>{entry.label} · {entry.id}</option>
+              ))}
+            </select>
+          </label>
+          <label className="form-field"><span>{t.implicitQ1}</span><input value={questionOne} onChange={(event) => setQuestionOne(event.target.value)} /></label>
+          <label className="form-field"><span>{t.implicitQ2}</span><input value={questionTwo} onChange={(event) => setQuestionTwo(event.target.value)} /></label>
+        </div>
+        <p className="implicit-help">{t.implicitNote} {language === "he" ? "הקידומת נלקחת מתיבת הטקסט למטה. אם היא ריקה, תמולא דוגמת הלימוד." : "The shared prefix comes from the text box below. If it is empty, the learning sample is filled in."}</p>
+        <button className="primary-button" onClick={() => void probeImplicit()} disabled={Boolean(busy) || !project || !implicitModel || !questionOne.trim() || !questionTwo.trim()}>
+          <Play size={16} fill="currentColor" />{busy === "implicit" ? t.implicitRunning : t.implicitRun}
+        </button>
+        {implicitResult ? (
+          <>
+            <div className={`cache-hit-banner${implicitResult.hit ? " cache-hit-success" : ""}`} style={{ marginTop: 16 }}>
+              {implicitResult.hit ? <ShieldCheck size={24} /> : <AlertTriangle size={24} />}
+              <div>
+                <strong>{implicitResult.hit ? `${implicitResult.cachedTokens.toLocaleString()} ${t.cachedTokens}` : t.implicitMiss}</strong>
+                <span>{implicitResult.hit ? t.implicitHit : "NO CACHE-HIT FIELD"}</span>
+              </div>
+            </div>
+            <div className="implicit-compare">
+              {implicitResult.calls.map((call, index) => (
+                <article className="implicit-call" key={`${call.question}-${index}`}>
+                  <h3>{t.implicitCall} {index + 1}</h3>
+                  <dl>
+                    <div><dt>{t.cachedTokens}</dt><dd>{Number(call.usageMetadata?.cachedContentTokenCount ?? 0).toLocaleString()}</dd></div>
+                    <div><dt>{t.promptTokens}</dt><dd>{Number(call.usageMetadata?.promptTokenCount ?? 0).toLocaleString()}</dd></div>
+                    <div><dt>{t.outputTokens}</dt><dd>{Number(call.usageMetadata?.candidatesTokenCount ?? 0).toLocaleString()}</dd></div>
+                    <div><dt>{t.latency}</dt><dd>{call.latencyMs.toLocaleString()} ms</dd></div>
+                  </dl>
+                </article>
+              ))}
+            </div>
+          </>
+        ) : null}
+      </section>
 
       <section className="test-panel cache-config-panel">
         <div className="test-panel-heading">

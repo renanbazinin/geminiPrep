@@ -26,6 +26,16 @@ The page makes real Vertex AI calls. Explicit-cache storage remains billable unt
 
 Use explicit caching when you need a predictable resource lifecycle and repeated use of the same large context. Use implicit caching when its best-effort behavior is enough and you do not want to manage cache resources.
 
+## Seeing implicit cache
+
+Implicit hits are not a mystery field. Vertex reports them in `usageMetadata.cachedContentTokenCount` on a later request whose input starts with a recent, large, identical prefix. The field is omitted or `0` when there was no hit.
+
+The cache lab’s **See implicit cache** action sends four `generateContent` calls: the large document is `systemInstruction`, the two questions alternate, and there is no `cachedContent` resource. Compare the usage objects. The first call often writes the prefix; later calls can show a hit. Gemini 3 often needs a third call.
+
+In chat, open **Debug trace** on the assistant turn. The summary chip reads `implicit · N` on a hit, or `no cache hit` when the field is missing. That last state is a miss, not “cache not requested” — implicit caching is always eligible on supported models.
+
+A miss after a large shared prefix is normal. Implicit caching is best-effort. Send the next turn immediately, keep the shared document first, and stay above the Gemini 3 minimum of 4,096 tokens.
+
 ## Gemini 3 series relevance
 
 The default model picker follows the explicit-cache support table from the official overview. At the review date it includes:
@@ -236,7 +246,7 @@ This repository’s automated tests mock Google responses and do not create clou
 | “Minimum tokens” error | Generate a larger sample or use a larger source. Trust Vertex’s token count, not the browser estimate. |
 | Model not found or unsupported | Confirm the current support table and the selected region. Preview IDs can change. |
 | Permission denied | ADC identity, project, IAM permissions, organization policy, and VPC Service Controls. |
-| No `cachedContentTokenCount` | Confirm the generation body referenced the exact cache name and that the selected model supports caching. |
+| No `cachedContentTokenCount` | For explicit use, confirm the generation body referenced the exact cache name. For implicit use, this is a miss — retry immediately with the same large prefix first. |
 | Cache is expired | Create a new cache. Expiration cannot be moved after the resource has expired. |
 | CMEK rejected on `global` | Select a supported region and a compatible key location. |
 | GCS source rejected | URI, object permission, MIME type, model media support, and size. |

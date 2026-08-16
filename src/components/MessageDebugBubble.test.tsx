@@ -72,7 +72,23 @@ describe("message debug bubble", () => {
     debug.request.provider!.body = { cachedContent: "projects/p/locations/global/cachedContents/cache-1" };
     debug.response.done!.usage = { totalTokenCount: 5_020, cachedContentTokenCount: 5_000 };
     render(<MessageDebugBubble debug={debug} />);
+    expect(screen.getByText("explicit · 5,000")).toBeInTheDocument();
     expect(screen.getByText("Cache hit · explicit")).toBeInTheDocument();
     expect(screen.getByText("5,000 tokens")).toBeInTheDocument();
+  });
+
+  it("labels a missing cachedContentTokenCount as an implicit miss", () => {
+    render(<MessageDebugBubble debug={debugTrace()} />);
+    expect(screen.getByText("no cache hit")).toBeInTheDocument();
+    expect(screen.getByText("No implicit cache hit")).toBeInTheDocument();
+    expect(screen.getByText("cachedContentTokenCount missing")).toBeInTheDocument();
+  });
+
+  it("surfaces implicit cache-hit evidence without a cachedContent resource", () => {
+    const debug = debugTrace();
+    debug.response.done!.usage = { totalTokenCount: 5_020, cachedContentTokenCount: 4_800 };
+    render(<MessageDebugBubble debug={debug} />);
+    expect(screen.getByText("implicit · 4,800")).toBeInTheDocument();
+    expect(screen.getByText("Cache hit · implicit")).toBeInTheDocument();
   });
 });

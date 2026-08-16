@@ -47,9 +47,19 @@ export function MessageDebugBubble({ debug }: { debug: ChatMessageDebug }) {
   const providerBody = recordFrom(debug.request.provider?.body);
   const cachedContent = typeof providerBody?.cachedContent === "string" ? providerBody.cachedContent : null;
   const cacheHit = cachedTokens > 0;
+  const cacheTitle = cacheHit
+    ? `Cache hit${cachedContent ? " · explicit" : " · implicit"}`
+    : cachedContent
+      ? "Cache miss · explicit"
+      : "No implicit cache hit";
   const cacheLabel = cacheHit
     ? `${cachedTokens.toLocaleString()} tokens`
-    : cachedContent ? "requested · no hit" : "not used";
+    : cachedContent
+      ? "requested · no cachedContentTokenCount"
+      : "cachedContentTokenCount missing";
+  const cacheSummary = cacheHit
+    ? `${cachedContent ? "explicit" : "implicit"} · ${cachedTokens.toLocaleString()}`
+    : "no cache hit";
 
   async function copyTrace() {
     await navigator.clipboard.writeText(JSON.stringify(debug, null, 2));
@@ -63,6 +73,7 @@ export function MessageDebugBubble({ debug }: { debug: ChatMessageDebug }) {
         <span className="debug-summary-icon"><Bug size={14} /></span>
         <span className="debug-summary-title">Debug trace</span>
         <span className={`debug-status debug-status-${debug.response.status}`}>{debug.response.status}</span>
+        <span className={`debug-summary-cache${cacheHit ? " debug-summary-cache-hit" : ""}`}>{cacheSummary}</span>
         {typeof duration === "number" ? <span className="debug-summary-metric"><Clock3 size={12} />{duration.toLocaleString()} ms</span> : null}
         <ChevronDown className="debug-chevron" size={15} />
       </summary>
@@ -81,7 +92,7 @@ export function MessageDebugBubble({ debug }: { debug: ChatMessageDebug }) {
 
         <div className="debug-cache-row">
           <span className={`debug-cache-icon${cacheHit ? " debug-cache-icon-hit" : ""}`}><DatabaseZap size={15} /></span>
-          <div><strong>{cacheHit ? `Cache hit${cachedContent ? " · explicit" : " · implicit"}` : cachedContent ? "Cache miss" : "Cache not requested"}</strong><span>{cacheLabel}</span></div>
+          <div><strong>{cacheTitle}</strong><span>{cacheLabel}</span></div>
           {cachedContent ? <code title={cachedContent}>{cachedContent}</code> : null}
         </div>
 

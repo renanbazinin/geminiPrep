@@ -12,6 +12,7 @@ import {
   deleteContextCache,
   listContextCaches,
   parseCacheName,
+  probeImplicitCache,
   updateContextCacheExpiration,
   useContextCache,
   validateCacheCreateRequest,
@@ -221,6 +222,56 @@ describe("cache lifecycle and evidence", () => {
     expect(JSON.parse(String(init?.body))).toEqual({ name: resourceName, ttl: "7200s" });
   });
 
+  it("probes implicit cache with a shared prefix and no cachedContent resource", async () => {
+    const fetchImpl = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      expect(body.cachedContent).toBeUndefined();
+      expect(body.systemInstruction).toEqual({ parts: [{ text: "Shared policy document" }] });
+      const question = body.contents[0].parts[0].text as string;
+      return jsonResponse({
+        candidates: [{ content: { parts: [{ text: question }] }, finishReason: "STOP" }],
+        usageMetadata: {
+          promptTokenCount: 5_100,
+          ...(question.includes("2") ? { cachedContentTokenCount: 4_900 } : {}),
+        },
+      });
+    }) as unknown as typeof fetch;
+    const result = await probeImplicitCache({
+      token: "token",
+      project: "study-project",
+      model: "gemini-3.7-flash",
+      region: "global",
+      prefix: "Shared policy document",
+      questions: ["Cite section 1", "Cite section 2"],
+      fetchImpl,
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(4);
+    expect(result.hit).toBe(true);
+    expect(result.cachedTokens).toBe(4_900);
+    expect(result.calls[0].usageMetadata?.cachedContentTokenCount).toBeUndefined();
+    expect(result.calls[1].usageMetadata?.cachedContentTokenCount).toBe(4_900);
+    expect(JSON.parse(String(vi.mocked(fetchImpl).mock.calls[0][1]?.body)).generationConfig.thinkingConfig).toEqual({
+      thinkingLevel: "low",
+    });
+  });
+
+  it("omits thinkingLevel when probing Gemini 2.5 implicit cache", async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse({
+      candidates: [{ content: { parts: [{ text: "ok" }] }, finishReason: "STOP" }],
+      usageMetadata: { promptTokenCount: 3_000 },
+    })) as unknown as typeof fetch;
+    await probeImplicitCache({
+      token: "token",
+      project: "study-project",
+      model: "gemini-2.5-flash",
+      region: "global",
+      prefix: "Shared policy document",
+      questions: ["One", "Two"],
+      fetchImpl,
+    });
+    expect(JSON.parse(String(vi.mocked(fetchImpl).mock.calls[0][1]?.body)).generationConfig.thinkingConfig).toBeUndefined();
+  });
+
   it("uses cachedContent and returns authoritative cache-hit metadata", async () => {
     const fetchImpl = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body));
@@ -276,6 +327,8 @@ describe("cache test API", () => {
     const response = await supertest(createApp()).get("/api/tests/cache/config");
     expect(response.status).toBe(200);
     expect(response.body.defaults).toMatchObject({ ttlSeconds: 3600 });
+    expect(response.body.implicitModels.length).toBeGreaterThan(0);
+    expect(response.body.defaults.implicitModel).toBeTruthy();
     expect(response.body.limits).toMatchObject({ minimumTokensGemini3: 4096, minimumTtlSeconds: 60 });
     expect(JSON.stringify(response.body)).not.toMatch(/access.?token|authorization|private.?key/i);
   });
@@ -305,6 +358,22 @@ describe("cache test API", () => {
       .send({ project: "study-project", ...request({ ttlSeconds: 30 }) });
     expect(response.status).toBe(400);
     expect(response.body.error).toContain("at least 60 seconds");
+    expect(getAccessToken).not.toHaveBeenCalled();
+  });
+
+  it("rejects an implicit probe without a shared prefix", async () => {
+    const getAccessToken = vi.fn(async () => "server-token");
+    const response = await supertest(createApp({ getAccessToken }))
+      .post("/api/tests/cache/implicit")
+      .send({
+        project: "study-project",
+        model: "gemini-3.6-flash",
+        region: "global",
+        questionOne: "One",
+        questionTwo: "Two",
+      });
+    expect(response.status).toBe(400);
+    expect(response.body.error).toContain("shared prefix");
     expect(getAccessToken).not.toHaveBeenCalled();
   });
 
