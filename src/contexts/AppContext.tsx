@@ -19,6 +19,7 @@ import {
   settingsForConfig,
 } from "../lib/storage";
 import { deleteAttachmentPayloads } from "../lib/attachments";
+import { deleteGeneratedImages } from "../lib/generated-images";
 
 type AppContextValue = {
   conversations: Conversation[];
@@ -71,10 +72,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [mutateConversation]);
 
   const deleteConversation = useCallback((id: string) => {
-    const attachments = conversations
-      .find((conversation) => conversation.id === id)
-      ?.messages.flatMap((message) => message.attachments ?? []) ?? [];
+    const conversation = conversations.find((entry) => entry.id === id);
+    const attachments = conversation?.messages.flatMap((message) => message.attachments ?? []) ?? [];
+    const images = conversation?.messages.flatMap((message) => message.generatedImages ?? []) ?? [];
     void deleteAttachmentPayloads(attachments).catch(() => undefined);
+    void deleteGeneratedImages(images).catch(() => undefined);
     setConversations((current) => {
       const remaining = current.filter((conversation) => conversation.id !== id);
       if (remaining.length > 0) {
@@ -91,7 +93,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const attachments = conversations.flatMap((conversation) => (
       conversation.messages.flatMap((message) => message.attachments ?? [])
     ));
+    const images = conversations.flatMap((conversation) => (
+      conversation.messages.flatMap((message) => message.generatedImages ?? [])
+    ));
     void deleteAttachmentPayloads(attachments).catch(() => undefined);
+    void deleteGeneratedImages(images).catch(() => undefined);
     const replacement = createConversation();
     setConversations([replacement]);
     setActiveConversationIdState(replacement.id);

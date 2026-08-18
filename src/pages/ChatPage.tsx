@@ -3,16 +3,20 @@ import {
   Check,
   Copy,
   Database,
+  Download,
   FileJson,
   FileText,
   FileType2,
+  Image as ImageIcon,
   LoaderCircle,
   Paperclip,
   Presentation,
   RotateCcw,
   Settings2,
+  Share2,
   Sparkles,
   Square,
+  Wrench,
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
@@ -21,9 +25,12 @@ import type {
   ChatMessage,
   ChatMessageDebug,
   ChatAttachment,
+  ChatGeneratedImage,
   ChatStreamErrorData,
   ChatStreamRequest,
+  ChatToolId,
 } from "../../shared/contracts";
+import { IMAGE_MODEL_ID, IMAGE_MODEL_REGION } from "../../shared/chat-tools";
 import { compactDebugValue } from "../../shared/debug";
 import { MarkdownMessage } from "../components/MarkdownMessage";
 import { MessageDebugBubble } from "../components/MessageDebugBubble";
@@ -38,7 +45,13 @@ import {
   deleteAttachmentPayloads,
   processAttachment,
 } from "../lib/attachments";
-import { ensureSessionCache } from "../lib/chat-cache";
+import {
+  deleteGeneratedImages,
+  generatedImageFilename,
+  generatedImageObjectUrl,
+  generatedImageToRequestPart,
+  storeGeneratedImage,
+} from "../lib/generated-images";
 import { createId } from "../lib/storage";
 
 const SUGGESTIONS = [
@@ -53,19 +66,26 @@ function directionFor(text: string): "rtl" | "ltr" {
 
 async function messageHistory(messages: ChatMessage[]): Promise<ChatStreamRequest["messages"]> {
   return Promise.all(messages
-    .filter((message) => message.content.trim() && message.status !== "error")
-    .map(async (message) => ({
-      role: message.role,
-      content: message.content,
-      ...(message.attachments?.length
-        ? { files: await Promise.all(message.attachments.map(attachmentToRequestPart)) }
-        : {}),
-    })));
-}
-
-/** Files live in the cache, so the request must not carry them a second time. */
-function withoutFiles(messages: ChatStreamRequest["messages"]): ChatStreamRequest["messages"] {
-  return messages.map(({ files: _files, ...message }) => message);
+    .filter((message) => message.status !== "error" && (
+      Boolean(message.content.trim())
+      || Boolean(message.attachments?.length)
+      || Boolean(message.generatedImages?.length)
+    ))
+    .map(async (message) => {
+      const files = [
+        ...(message.attachments?.length
+          ? await Promise.all(message.attachments.map(attachmentToRequestPart))
+          : []),
+        ...(message.generatedImages?.length
+          ? await Promise.all(message.generatedImages.map(generatedImageToRequestPart))
+          : []),
+      ];
+      return {
+        role: message.role,
+        content: message.content,
+        ...(files.length ? { files } : {}),
+      };
+    }));
 }
 
 function fileSize(bytes: number): string {
@@ -92,6 +112,112 @@ function MessageAttachments({ attachments }: { attachments: ChatAttachment[] }) 
       ))}
     </div>
   );
+}
+
+function GeneratedImageCard({ image }: { image: ChatGeneratedImage }) {
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    let objectUrl: string | null = null;
+    let cancelled = false;
+    void generatedImageObjectUrl(image).then((next) => {
+      if (cancelled) {
+        if (next) URL.revokeObjectURL(next);
+        return;
+      }
+      objectUrl = next;
+      setUrl(next);
+    });
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [image.storageKey]);
+  if (!url) return <div className="generated-image generated-image-pending">Loading image…</div>;
+  return (
+    <figure className="generated-image">
+      <img src={url} alt="Generated" />
+      <a className="generated-image-download" href={url} download={generatedImageFilename(image)}>
+        <Download size={14} />
+        Download
+      </a>
+    </figure>
+  );
+}
+
+function ComposerTools({
+  selected,
+  onSelect,
+  disabled,
+}: {
+  selected: ChatToolId | null;
+  onSelect(tool: ChatToolId | null): void;
+  disabled: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    function onPointer(event: MouseEvent) {
+      if (!wrapRef.current?.contains(event.target as Node)) setOpen(false);
+    }
+    function onKey(event: globalThis.KeyboardEvent) {
+      if (event.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("mousedown", onPointer);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onPointer);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+  const Icon = selected === "image" ? ImageIcon : selected === "graph" ? Share2 : Wrench;
+  const title = selected === "image" ? "Generate image" : selected === "graph" ? "Generate graph" : "Tools (Auto)";
+  return (
+    <div className="composer-tools" ref={wrapRef}>
+      <button
+        type="button"
+        className={`tool-button${selected ? " tool-button-active" : ""}`}
+        aria-label={title}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        title={title}
+        disabled={disabled}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <Icon size={18} />
+      </button>
+      {open ? (
+        <div className="composer-tools-menu" role="menu">
+          {([
+            ["image", "Generate image", ImageIcon],
+            ["graph", "Generate graph", Share2],
+          ] as const).map(([id, label, ItemIcon]) => (
+            <button
+              key={id}
+              type="button"
+              role="menuitemradio"
+              aria-checked={selected === id}
+              className={selected === id ? "is-selected" : undefined}
+              onClick={() => {
+                onSelect(selected === id ? null : id);
+                setOpen(false);
+              }}
+            >
+              <ItemIcon size={16} />
+              {label}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function composerPlaceholder(tool: ChatToolId | null, hasAttachments: boolean): string {
+  if (tool === "image") return "Describe the image…";
+  if (tool === "graph") return "Describe the diagram…";
+  if (hasAttachments) return "Ask about these files…";
+  return "Message Gemini Prep…";
 }
 
 function initialDebugTrace(request: ChatStreamRequest, startedAt: string): ChatMessageDebug {
@@ -179,6 +305,7 @@ export function ChatPage() {
   const [pendingAttachments, setPendingAttachments] = useState<ChatAttachment[]>([]);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [cacheNotice, setCacheNotice] = useState<string | null>(null);
+  const [selectedTool, setSelectedTool] = useState<ChatToolId | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -264,6 +391,7 @@ export function ChatPage() {
     abortRef.current = controller;
     setRunning(true);
     let assembled = "";
+    let generatedImages: ChatGeneratedImage[] = [];
     let debug = initialDebug;
     const clientStartedMs = Date.parse(initialDebug.timing.clientStartedAt);
     function updateDebug(next: ChatMessageDebug, patch: Partial<ChatMessage> = {}) {
@@ -316,6 +444,50 @@ export function ChatPage() {
               clientTimeToFirstDeltaMs: Math.max(0, Date.parse(firstDeltaAt) - clientStartedMs),
             },
           }, { content: assembled });
+        },
+        async onImage(image) {
+          const stored = await storeGeneratedImage(image);
+          generatedImages = [...generatedImages, stored];
+          const firstDeltaAt = debug.timing.firstDeltaAt ?? new Date().toISOString();
+          updateDebug({
+            ...debug,
+            response: {
+              ...debug.response,
+              events: [...(debug.response.events ?? []), {
+                event: "image",
+                data: { mimeType: image.mimeType, data: `[${image.data.length} base64 characters omitted]` },
+              }],
+            },
+            timing: {
+              ...debug.timing,
+              firstDeltaAt,
+              clientTimeToFirstDeltaMs: Math.max(0, Date.parse(firstDeltaAt) - clientStartedMs),
+            },
+          }, { generatedImages });
+        },
+        onTool(toolEvent) {
+          const firstDeltaAt = debug.timing.firstDeltaAt ?? new Date().toISOString();
+          updateDebug({
+            ...debug,
+            response: {
+              ...debug.response,
+              events: [...(debug.response.events ?? []), { event: "tool", data: toolEvent }],
+            },
+            timing: {
+              ...debug.timing,
+              firstDeltaAt,
+              clientTimeToFirstDeltaMs: Math.max(0, Date.parse(firstDeltaAt) - clientStartedMs),
+            },
+          }, {
+            tool: toolEvent.id,
+            request: {
+              provider: request.provider,
+              model: toolEvent.model ?? request.model,
+              ...(toolEvent.region ?? request.region
+                ? { region: toolEvent.region ?? request.region }
+                : {}),
+            },
+          });
         },
         onDone(done) {
           updateDebug({
@@ -378,29 +550,34 @@ export function ChatPage() {
     }
   }
 
-  /**
-   * Auto-creates (or reuses) a Vertex cache holding every file in the conversation.
-   * Returns the resource name to send, or undefined to run the request uncached.
-   */
-  async function resolveCache(messages: ChatStreamRequest["messages"]): Promise<string | undefined> {
-    if (!settings.cacheEnabled) return undefined;
-    const files = messages.flatMap((message) => message.files ?? []);
-    if (files.length === 0) return undefined;
-    const attempt = await ensureSessionCache({
-      settings,
-      project: config?.project ?? null,
-      files,
-    });
-    if (attempt.status === "hit") {
-      setCacheNotice(null);
-      return attempt.entry.name;
-    }
-    if (attempt.status === "created") {
-      setCacheNotice(`Created a context cache for ${files.length} file${files.length === 1 ? "" : "s"}. It expires in ${Math.round(settings.cacheTtlSeconds / 60)} minutes and is billed while stored.`);
-      return attempt.entry.name;
-    }
-    setCacheNotice(`Running without a cache: ${attempt.reason}`);
-    return undefined;
+  function buildStreamRequest(
+    messages: ChatStreamRequest["messages"],
+    tool: ChatToolId | null,
+  ): ChatStreamRequest {
+    const image = tool === "image";
+    const model = image ? IMAGE_MODEL_ID : activeModel;
+    const region = settings.provider === "vertex"
+      ? (image ? IMAGE_MODEL_REGION : settings.region)
+      : undefined;
+    return {
+      provider: settings.provider,
+      model,
+      ...(region ? { region } : {}),
+      systemInstruction: settings.systemInstruction,
+      temperature: settings.temperature,
+      maxOutputTokens: settings.maxOutputTokens,
+      ...(!image ? { thinkingLevel: settings.thinkingLevel } : {}),
+      ...(tool ? { tool } : {}),
+      messages,
+    };
+  }
+
+  function requestSnapshot(request: ChatStreamRequest) {
+    return {
+      provider: request.provider,
+      model: request.model,
+      ...(request.region ? { region: request.region } : {}),
+    };
   }
 
   async function startWithText(text: string) {
@@ -417,21 +594,12 @@ export function ChatPage() {
         ? await Promise.all(attachments.map(attachmentToRequestPart))
         : undefined;
       const messages = [...currentHistory, { role: "user" as const, content: clean, ...(files ? { files } : {}) }];
-      const cachedContent = await resolveCache(messages);
-      const request: ChatStreamRequest = {
-        provider: settings.provider,
-        model: activeModel,
-        ...(settings.provider === "vertex" ? { region: settings.region } : {}),
-        systemInstruction: settings.systemInstruction,
-        temperature: settings.temperature,
-        maxOutputTokens: settings.maxOutputTokens,
-        thinkingLevel: settings.thinkingLevel,
-        ...(cachedContent ? { cachedContent } : {}),
-        messages: cachedContent ? withoutFiles(messages) : messages,
-      };
+      const tool = selectedTool;
+      const request = buildStreamRequest(messages, tool);
       const debug = initialDebugTrace(request, now);
       const userMessage: ChatMessage = {
         id: createId(), role: "user", content: clean, createdAt: now, status: "complete",
+        ...(tool ? { tool } : {}),
         ...(attachments.length ? { attachments } : {}),
       };
       const assistantMessage: ChatMessage = {
@@ -440,11 +608,8 @@ export function ChatPage() {
         content: "",
         createdAt: now,
         status: "streaming",
-        request: {
-          provider: settings.provider,
-          model: activeModel,
-          ...(settings.provider === "vertex" ? { region: settings.region } : {}),
-        },
+        request: requestSnapshot(request),
+        ...(tool ? { tool } : {}),
         debug,
       };
       appendMessages(conversationId, [userMessage, assistantMessage]);
@@ -481,18 +646,8 @@ export function ChatPage() {
     setAttachmentError(null);
     try {
       const messages = await messageHistory(baseMessages);
-      const cachedContent = await resolveCache(messages);
-      const request: ChatStreamRequest = {
-        provider: settings.provider,
-        model: activeModel,
-        ...(settings.provider === "vertex" ? { region: settings.region } : {}),
-        systemInstruction: settings.systemInstruction,
-        temperature: settings.temperature,
-        maxOutputTokens: settings.maxOutputTokens,
-        thinkingLevel: settings.thinkingLevel,
-        ...(cachedContent ? { cachedContent } : {}),
-        messages: cachedContent ? withoutFiles(messages) : messages,
-      };
+      const tool = message.tool ?? null;
+      const request = buildStreamRequest(messages, tool);
       const startedAt = new Date().toISOString();
       const debug = initialDebugTrace(request, startedAt);
       const assistantMessage: ChatMessage = {
@@ -501,13 +656,11 @@ export function ChatPage() {
         content: "",
         createdAt: startedAt,
         status: "streaming",
-        request: {
-          provider: settings.provider,
-          model: activeModel,
-          ...(settings.provider === "vertex" ? { region: settings.region } : {}),
-        },
+        request: requestSnapshot(request),
+        ...(tool ? { tool } : {}),
         debug,
       };
+      void deleteGeneratedImages(message.generatedImages ?? []).catch(() => undefined);
       removeMessage(activeConversation.id, message.id);
       appendMessages(activeConversation.id, [assistantMessage]);
       void run(activeConversation.id, request, assistantMessage.id, debug);
@@ -562,15 +715,34 @@ export function ChatPage() {
                       <span className="message-meta">
                         {message.request.provider === "vertex" ? "Vertex" : "API"} · {message.request.model}
                         {message.request.region ? ` · ${message.request.region}` : ""}
+                        {message.tool === "image" ? " · image" : message.tool === "graph" ? " · graph" : ""}
                       </span>
+                    ) : message.tool ? (
+                      <span className="message-meta">{message.tool === "image" ? "image" : "graph"}</span>
                     ) : null}
                   </div>
                   <div className="message-content" dir={directionFor(message.content)}>
                     {message.role === "assistant"
-                      ? message.content ? <MarkdownMessage>{message.content}</MarkdownMessage> : null
+                      ? message.content
+                        ? (
+                          <MarkdownMessage
+                            complete={message.status !== "streaming"}
+                            wrapAsMermaid={message.tool === "graph"}
+                          >
+                            {message.content}
+                          </MarkdownMessage>
+                        )
+                        : null
                       : <p>{message.content}</p>}
                     {message.status === "streaming" ? <span className="streaming-caret" aria-label="Generating" /> : null}
                   </div>
+                  {message.generatedImages?.length ? (
+                    <div className="generated-images" aria-label="Generated images">
+                      {message.generatedImages.map((image) => (
+                        <GeneratedImageCard key={image.id} image={image} />
+                      ))}
+                    </div>
+                  ) : null}
                   {message.attachments?.length ? <MessageAttachments attachments={message.attachments} /> : null}
                   {message.error ? <div className="message-error" role="alert">{message.error}</div> : null}
                   {message.status === "stopped" ? <div className="message-state">Generation stopped</div> : null}
@@ -639,13 +811,18 @@ export function ChatPage() {
             >
               {processingFiles ? <LoaderCircle className="spin" size={18} /> : <Paperclip size={18} />}
             </button>
+            <ComposerTools
+              selected={selectedTool}
+              onSelect={setSelectedTool}
+              disabled={running || preparing}
+            />
             <textarea
               ref={textareaRef}
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
               onKeyDown={handleComposerKeyDown}
               rows={1}
-              placeholder={pendingAttachments.length ? "Ask about these files…" : "Message Gemini Prep…"}
+              placeholder={composerPlaceholder(selectedTool, pendingAttachments.length > 0)}
               aria-label="Message"
               disabled={running || preparing}
             />
@@ -660,7 +837,7 @@ export function ChatPage() {
             )}
           </div>
         </form>
-        <p className="composer-footnote">Enter to send · Attach up to 10 files / 20 MB · PDFs stay visual; DOCX and PPTX become text</p>
+        <p className="composer-footnote">Enter to send · Tools stay on until you switch · Attach up to 10 files / 20 MB</p>
       </div>
     </div>
   );

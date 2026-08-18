@@ -1,6 +1,8 @@
 export type ProviderId = "vertex" | "gemini";
 export type MessageRole = "user" | "assistant";
 export type MessageStatus = "streaming" | "complete" | "stopped" | "error";
+export type ChatToolId = "image" | "graph";
+export type ChatImageMimeType = "image/png" | "image/jpeg" | "image/webp" | "image/gif";
 
 export type ModelOption = {
   id: string;
@@ -104,9 +106,15 @@ export type ChatRequestFilePart =
   | {
       kind: "inlineData";
       name: string;
-      mimeType: "application/pdf";
+      mimeType: "application/pdf" | ChatImageMimeType;
       data: string;
     };
+
+export type ChatGeneratedImage = {
+  id: string;
+  storageKey: string;
+  mimeType: ChatImageMimeType;
+};
 
 export type ChatStreamRequestMessage = {
   role: MessageRole;
@@ -121,7 +129,9 @@ export type ChatMessage = {
   createdAt: string;
   status: MessageStatus;
   request?: RequestSnapshot;
+  tool?: ChatToolId;
   attachments?: ChatAttachment[];
+  generatedImages?: ChatGeneratedImage[];
   debug?: ChatMessageDebug;
   error?: string;
 };
@@ -193,14 +203,30 @@ export type ChatStreamRequest = {
   temperature: number;
   maxOutputTokens: number;
   thinkingLevel?: ThinkingLevel;
+  tool?: ChatToolId;
   /** Full cachedContents resource name. Its content is prepended by Vertex, so never resend it. */
   cachedContent?: string;
   messages: ChatStreamRequestMessage[];
 };
 
+export type ChatStreamImageData = {
+  mimeType: ChatImageMimeType;
+  data: string;
+};
+
+export type ChatStreamToolData = {
+  id: ChatToolId;
+  name: string;
+  args: Record<string, unknown>;
+  model?: string;
+  region?: string;
+};
+
 export type ChatStreamEvent =
   | { event: "meta"; data: ChatStreamMeta }
   | { event: "delta"; data: { text: string } }
+  | { event: "image"; data: ChatStreamImageData }
+  | { event: "tool"; data: ChatStreamToolData }
   | { event: "done"; data: ChatStreamDone }
   | { event: "error"; data: ChatStreamErrorData };
 

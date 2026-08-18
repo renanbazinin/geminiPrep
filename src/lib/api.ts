@@ -1,9 +1,12 @@
 import type {
   ChatStreamEvent,
+  ChatStreamImageData,
   ChatStreamRequest,
+  ChatStreamToolData,
   PublicConfig,
   RegionTestConfig,
 } from "../../shared/contracts";
+import { isChatToolId, normalizeImageMimeType } from "../../shared/chat-tools";
 
 async function responseError(response: Response): Promise<string> {
   const body = await response.json().catch(() => null) as { error?: unknown } | null;
@@ -28,6 +31,8 @@ export async function streamChat(
     onOpen?(response: { status: number; statusText: string; headers: Record<string, string> }): void;
     onMeta?(event: Extract<ChatStreamEvent, { event: "meta" }>["data"]): void;
     onDelta(text: string): void;
+    onImage?(image: ChatStreamImageData): void | Promise<void>;
+    onTool?(tool: ChatStreamToolData): void | Promise<void>;
     onDone?(event: Extract<ChatStreamEvent, { event: "done" }>["data"]): void;
     onError?(event: Extract<ChatStreamEvent, { event: "error" }>["data"]): void;
   },
@@ -71,6 +76,22 @@ export async function streamChat(
         const data = JSON.parse(dataText) as Record<string, unknown>;
         if (eventName === "meta") handlers.onMeta?.(data as never);
         if (eventName === "delta" && typeof data.text === "string") handlers.onDelta(data.text);
+        if (eventName === "image" && typeof data.mimeType === "string" && typeof data.data === "string") {
+          const mimeType = normalizeImageMimeType(data.mimeType) ?? (data.mimeType.startsWith("image/") ? "image/png" : null);
+          if (mimeType) await handlers.onImage?.({ mimeType, data: data.data });
+        }
+        if (eventName === "tool" && isChatToolId(data.id) && typeof data.name === "string") {
+          const args = data.args && typeof data.args === "object" && !Array.isArray(data.args)
+            ? data.args as Record<string, unknown>
+            : {};
+          await handlers.onTool?.({
+            id: data.id,
+            name: data.name,
+            args,
+            ...(typeof data.model === "string" ? { model: data.model } : {}),
+            ...(typeof data.region === "string" ? { region: data.region } : {}),
+          });
+        }
         if (eventName === "done") {
           terminalEvent = true;
           handlers.onDone?.(data as never);

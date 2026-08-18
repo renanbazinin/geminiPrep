@@ -1,4 +1,5 @@
 import type { ModelOption, RegionOption } from "../shared/contracts.js";
+export { IMAGE_MODEL_ID } from "../shared/chat-tools.js";
 
 export const VERTEX_REGIONS: RegionOption[] = [
   { id: "global", label: "Global endpoint", group: "global" },

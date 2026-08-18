@@ -1,10 +1,26 @@
-import type { ChatStreamRequest, DebugHttpExchange } from "../../shared/contracts.js";
+import type { ChatStreamImageData, ChatStreamRequest, DebugHttpExchange } from "../../shared/contracts.js";
 import { compactDebugValue } from "../../shared/debug.js";
+import { chatFunctionDeclarations, normalizeImageMimeType, resolvedChatSystemInstruction } from "../../shared/chat-tools.js";
 import { vertexGenerateContentUrl } from "../region-probe.js";
+
+type UpstreamInlineData = {
+  mimeType?: unknown;
+  data?: unknown;
+};
+
+type UpstreamFunctionCall = {
+  name?: unknown;
+  args?: unknown;
+};
 
 type UpstreamChunk = {
   candidates?: Array<{
-    content?: { parts?: Array<{ text?: unknown; thought?: boolean }> };
+    content?: { parts?: Array<{
+      text?: unknown;
+      thought?: boolean;
+      inlineData?: UpstreamInlineData;
+      functionCall?: UpstreamFunctionCall;
+    }> };
     finishReason?: string;
   }>;
   usageMetadata?: Record<string, unknown>;
@@ -16,29 +32,49 @@ export function geminiStreamUrl(model: string, apiVersion = "v1beta"): string {
   return `https://generativelanguage.googleapis.com/${apiVersion}/models/${model}:streamGenerateContent?alt=sse`;
 }
 
+function contentParts(message: ChatStreamRequest["messages"][number]): Array<Record<string, unknown>> {
+  const parts: Array<Record<string, unknown>> = [];
+  if (message.content.trim()) parts.push({ text: message.content });
+  for (const file of message.files ?? []) {
+    if (file.kind === "text") {
+      parts.push({
+        text: `\n\n--- Attached file: ${file.name} (${file.mimeType}) ---\n${file.text}\n--- End attached file: ${file.name} ---`,
+      });
+      continue;
+    }
+    if (file.mimeType === "application/pdf") {
+      parts.push({ text: `Attached PDF: ${file.name}` });
+    }
+    parts.push({ inlineData: { mimeType: file.mimeType, data: file.data } });
+  }
+  return parts.length > 0 ? parts : [{ text: "" }];
+}
+
 export function buildGenerateContentBody(request: ChatStreamRequest): Record<string, unknown> {
+  const systemInstruction = resolvedChatSystemInstruction(request);
+  const autoRoute = !request.tool;
+  const cachedContent = autoRoute ? undefined : request.cachedContent;
   return {
     contents: request.messages.map((message) => ({
       role: message.role === "assistant" ? "model" : "user",
-      parts: [
-        { text: message.content },
-        ...(message.files ?? []).flatMap((file) => file.kind === "text"
-          ? [{ text: `\n\n--- Attached file: ${file.name} (${file.mimeType}) ---\n${file.text}\n--- End attached file: ${file.name} ---` }]
-          : [
-              { text: `Attached PDF: ${file.name}` },
-              { inlineData: { mimeType: file.mimeType, data: file.data } },
-            ]),
-      ],
+      parts: contentParts(message),
     })),
     // A cache carries its own system instruction, and Vertex rejects a second one alongside it.
-    ...(request.systemInstruction && !request.cachedContent
-      ? { systemInstruction: { role: "system", parts: [{ text: request.systemInstruction }] } }
+    ...(systemInstruction && !cachedContent
+      ? { systemInstruction: { role: "system", parts: [{ text: systemInstruction }] } }
       : {}),
-    ...(request.cachedContent ? { cachedContent: request.cachedContent } : {}),
+    ...(cachedContent ? { cachedContent } : {}),
+    ...(autoRoute
+      ? {
+          tools: [{ functionDeclarations: chatFunctionDeclarations() }],
+          toolConfig: { functionCallingConfig: { mode: "AUTO" } },
+        }
+      : {}),
     generationConfig: {
       temperature: request.temperature,
       maxOutputTokens: request.maxOutputTokens,
       ...(request.thinkingLevel ? { thinkingConfig: { thinkingLevel: request.thinkingLevel } } : {}),
+      ...(request.tool === "image" ? { responseModalities: ["TEXT", "IMAGE"] } : {}),
     },
   };
 }
@@ -154,6 +190,56 @@ export function extractChunkText(chunk: UpstreamChunk): string {
     .filter((part) => part.thought !== true && typeof part.text === "string")
     .map((part) => part.text as string)
     .join("");
+}
+
+export function extractChunkImages(chunk: UpstreamChunk): ChatStreamImageData[] {
+  const images: ChatStreamImageData[] = [];
+  for (const candidate of chunk.candidates ?? []) {
+    for (const part of candidate.content?.parts ?? []) {
+      const inline = part.inlineData;
+      if (!inline || typeof inline.data !== "string" || !inline.data) continue;
+      const mimeType = typeof inline.mimeType === "string" ? inline.mimeType : "image/png";
+      const normalized = normalizeImageMimeType(mimeType) ?? (mimeType.startsWith("image/") ? "image/png" : null);
+      if (!normalized) continue;
+      images.push({ mimeType: normalized, data: inline.data });
+    }
+  }
+  return images;
+}
+
+export type ExtractedFunctionCall = {
+  name: string;
+  args: Record<string, unknown>;
+};
+
+function asArgs(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
+}
+
+export function extractChunkFunctionCalls(chunk: UpstreamChunk): ExtractedFunctionCall[] {
+  const calls: ExtractedFunctionCall[] = [];
+  for (const candidate of chunk.candidates ?? []) {
+    for (const part of candidate.content?.parts ?? []) {
+      const call = part.functionCall;
+      if (!call || typeof call.name !== "string" || !call.name.trim()) continue;
+      calls.push({ name: call.name, args: asArgs(call.args) });
+    }
+  }
+  return calls;
+}
+
+export function mergeFunctionCall(
+  current: ExtractedFunctionCall | undefined,
+  next: ExtractedFunctionCall[],
+): ExtractedFunctionCall | undefined {
+  let merged = current;
+  for (const call of next) {
+    merged = merged && call.name === merged.name
+      ? { name: call.name, args: { ...merged.args, ...call.args } }
+      : call;
+  }
+  return merged;
 }
 
 export function upstreamErrorMessage(value: unknown, status: number): string {

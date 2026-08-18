@@ -207,13 +207,32 @@ a { color: inherit; }
 .composer, .composer-alert, .composer-footnote { width: min(860px, 100%); margin-left: auto; margin-right: auto; }
 .composer { display: flex; flex-direction: column; padding: 9px 10px; border: 1px solid #363e4a; border-radius: 18px; background: #171b21; box-shadow: 0 12px 44px rgba(0, 0, 0, 0.28); }
 .composer:focus-within { border-color: #5b557b; box-shadow: 0 0 0 2px rgba(157, 140, 255, 0.08), 0 12px 44px rgba(0, 0, 0, 0.28); }
-.composer-main { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: end; gap: 9px; }
+.composer-main { display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto; align-items: end; gap: 9px; }
 .composer textarea { min-height: 38px; max-height: 180px; padding: 8px 0 5px; resize: none; overflow-y: auto; border: 0; outline: 0; background: transparent; color: var(--text); line-height: 1.45; }
 .composer textarea::placeholder { color: #737d8b; }
 .file-input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 .attach-button { width: 36px; height: 36px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 10px; background: transparent; color: var(--muted); cursor: pointer; }
 .attach-button:hover:not(:disabled) { background: var(--surface-3); color: var(--text); }
 .attach-button:disabled { opacity: 0.4; cursor: not-allowed; }
+.composer-tools { position: relative; }
+.tool-button { width: 36px; height: 36px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 10px; background: transparent; color: var(--muted); cursor: pointer; }
+.tool-button:hover:not(:disabled) { background: var(--surface-3); color: var(--text); }
+.tool-button:disabled { opacity: 0.4; cursor: not-allowed; }
+.tool-button-active { color: var(--accent-strong); background: #24213d; }
+.composer-tools-menu { position: absolute; left: 0; bottom: calc(100% + 8px); z-index: 6; min-width: 210px; padding: 6px; border: 1px solid #3a4250; border-radius: 12px; background: #1b2028; box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35); }
+.composer-tools-menu button { width: 100%; display: flex; align-items: center; gap: 9px; padding: 8px 10px; border: 0; border-radius: 8px; background: transparent; color: var(--text); font-size: 0.78rem; text-align: left; cursor: pointer; }
+.composer-tools-menu button:hover { background: var(--surface-3); }
+.composer-tools-menu button.is-selected { background: #24213d; color: var(--accent-strong); }
+.generated-images { display: grid; gap: 10px; margin-top: 10px; }
+.generated-image { margin: 0; overflow: hidden; border: 1px solid var(--border); border-radius: 12px; background: #101318; }
+.generated-image img { display: block; width: 100%; max-height: 520px; object-fit: contain; background: #0b0d10; }
+.generated-image-pending { padding: 28px 14px; color: var(--subtle); font-size: 0.78rem; text-align: center; }
+.generated-image-download { display: inline-flex; align-items: center; gap: 6px; margin: 8px 10px 10px; color: var(--muted); font-size: 0.72rem; text-decoration: none; }
+.generated-image-download:hover { color: var(--text); }
+.mermaid-frame { margin: 1.2em 0; padding: 14px; overflow: auto; border: 1px solid var(--border); border-radius: 11px; background: #0d1014; }
+.mermaid-pending { color: var(--subtle); font-size: 0.78rem; }
+.mermaid-svg { display: flex; justify-content: center; }
+.mermaid-svg svg { max-width: 100%; height: auto; }
 .pending-attachments { display: flex; flex-wrap: wrap; gap: 7px; padding: 2px 1px 9px; }
 .pending-attachment { max-width: 270px; display: grid; grid-template-columns: 28px minmax(0, 1fr) 25px; align-items: center; gap: 7px; padding: 6px; border: 1px solid var(--border); border-radius: 9px; background: #11151a; }
 .pending-file-icon { width: 27px; height: 27px; display: grid; place-items: center; border-radius: 7px; background: #282341; color: var(--accent-strong); }

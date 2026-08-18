@@ -3,11 +3,14 @@ import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../app.js";
 import { resolveGeminiChatModels, resolveProbeRegions, resolveVertexChatModels } from "../catalog.js";
+import { IMAGE_MODEL_ID, GRAPH_SYSTEM_PROMPT } from "../../shared/chat-tools.js";
 import { validateChatRequest } from "./validation.js";
 import {
   buildGenerateContentBody,
   createUpstreamRequest,
   describeUpstreamRequest,
+  extractChunkFunctionCalls,
+  extractChunkImages,
   extractChunkText,
   geminiStreamUrl,
   parseSseJson,
@@ -139,7 +142,73 @@ describe("chat validation", () => {
         content: "Read this",
         files: [{ kind: "inlineData", name: "slides.pptx", mimeType: "application/zip", data: "eA==" }],
       }],
-    }), catalogs())).toThrow(/inlineData must be a PDF/);
+    }), catalogs())).toThrow(/inlineData must be a PDF or image/);
+  });
+
+  it("rewrites image-tool requests onto gemini-3.1-flash-image and drops thinking", () => {
+    const validated = validateChatRequest(validBody({
+      tool: "image",
+      thinkingLevel: "high",
+    }), catalogs());
+    expect(validated.model).toBe(IMAGE_MODEL_ID);
+    expect(validated.thinkingLevel).toBeUndefined();
+    expect(validated.tool).toBe("image");
+    const body = buildGenerateContentBody(validated) as {
+      generationConfig: Record<string, unknown>;
+    };
+    expect(body.generationConfig.responseModalities).toEqual(["TEXT", "IMAGE"]);
+    expect(body.generationConfig).not.toHaveProperty("thinkingConfig");
+  });
+
+  it("rejects the image model without the image tool", () => {
+    expect(() => validateChatRequest(validBody({ model: IMAGE_MODEL_ID }), catalogs()))
+      .toThrow(/not configured/);
+  });
+
+  it("forces Vertex image generation onto the global region", () => {
+    const validated = validateChatRequest(validBody({
+      provider: "vertex",
+      model: resolveVertexChatModels()[0].id,
+      region: "europe-west1",
+      tool: "image",
+    }), catalogs());
+    expect(validated.region).toBe("global");
+    expect(validated.model).toBe(IMAGE_MODEL_ID);
+  });
+
+  it("merges the Mermaid system prompt for the graph tool", () => {
+    const body = buildGenerateContentBody(validateChatRequest(validBody({
+      tool: "graph",
+      systemInstruction: "Be concise",
+    }), catalogs())) as { systemInstruction: { parts: Array<{ text: string }> }; generationConfig: Record<string, unknown> };
+    expect(body.systemInstruction.parts[0].text).toContain("Be concise");
+    expect(body.systemInstruction.parts[0].text).toContain(GRAPH_SYSTEM_PROMPT);
+    expect(body.generationConfig).not.toHaveProperty("responseModalities");
+  });
+
+  it("drops cachedContent when a chat tool is selected", () => {
+    const region = resolveProbeRegions()[0].id;
+    const validated = validateChatRequest(validBody({
+      provider: "vertex",
+      model: resolveVertexChatModels()[0].id,
+      region,
+      tool: "graph",
+      cachedContent: `projects/study-project/locations/${region}/cachedContents/cache_123`,
+    }), catalogs());
+    expect(validated.cachedContent).toBeUndefined();
+    expect(validated.model).toBe(resolveVertexChatModels()[0].id);
+  });
+
+  it("accepts generated images on assistant history", () => {
+    const validated = validateChatRequest(validBody({
+      tool: "image",
+      messages: [
+        { role: "user", content: "Draw a cat" },
+        { role: "assistant", content: "", files: [{ kind: "inlineData", name: "cat.png", mimeType: "image/png", data: "QUJDRA==" }] },
+        { role: "user", content: "Make it orange" },
+      ],
+    }), catalogs());
+    expect(validated.messages[1].files?.[0]).toMatchObject({ mimeType: "image/png" });
   });
 });
 
@@ -180,6 +249,41 @@ describe("provider request adapters", () => {
     ]);
   });
 
+  it("maps assistant images into provider inlineData parts", () => {
+    const body = buildGenerateContentBody(validateChatRequest(validBody({
+      tool: "image",
+      messages: [
+        { role: "user", content: "Draw a cat" },
+        { role: "assistant", content: "", files: [{ kind: "inlineData", name: "cat.png", mimeType: "image/png", data: "QUJDRA==" }] },
+        { role: "user", content: "Make it orange" },
+      ],
+    }), catalogs())) as { contents: Array<{ parts: Array<Record<string, unknown>> }> };
+    expect(body.contents[1].parts).toEqual([
+      { inlineData: { mimeType: "image/png", data: "QUJDRA==" } },
+    ]);
+  });
+
+  it("sends function declarations in AUTO mode when no tool is forced", () => {
+    const body = buildGenerateContentBody(validateChatRequest(validBody(), catalogs())) as {
+      tools: Array<{ functionDeclarations: Array<{ name: string }> }>;
+      toolConfig: { functionCallingConfig: { mode: string } };
+      generationConfig: Record<string, unknown>;
+    };
+    expect(body.tools[0].functionDeclarations.map((entry) => entry.name)).toEqual([
+      "generate_image",
+      "generate_graph",
+    ]);
+    expect(body.toolConfig.functionCallingConfig.mode).toBe("AUTO");
+    expect(body.generationConfig).not.toHaveProperty("responseModalities");
+  });
+
+  it("does not attach planner tools when a specialist tool is forced", () => {
+    const body = buildGenerateContentBody(validateChatRequest(validBody({ tool: "image" }), catalogs()));
+    expect(body).not.toHaveProperty("tools");
+    expect(body).not.toHaveProperty("toolConfig");
+    expect(body.generationConfig).toMatchObject({ responseModalities: ["TEXT", "IMAGE"] });
+  });
+
   it("sends thinkingConfig inside generationConfig only when set", () => {
     const withLevel = buildGenerateContentBody(validateChatRequest(validBody({ thinkingLevel: "low" }), catalogs()));
     expect(withLevel.generationConfig).toMatchObject({ thinkingConfig: { thinkingLevel: "low" } });
@@ -187,7 +291,7 @@ describe("provider request adapters", () => {
       .not.toHaveProperty("thinkingConfig");
   });
 
-  it("sends cachedContent and drops the duplicate system instruction the cache already holds", () => {
+  it("drops cachedContent on the Auto planner so function declarations can be sent", () => {
     const region = resolveProbeRegions()[0].id;
     const name = `projects/study-project/locations/${region}/cachedContents/cache_123`;
     const body = buildGenerateContentBody(validateChatRequest(validBody({
@@ -196,9 +300,13 @@ describe("provider request adapters", () => {
       region,
       systemInstruction: "Be concise",
       cachedContent: name,
-    }), catalogs()));
-    expect(body.cachedContent).toBe(name);
-    expect(body).not.toHaveProperty("systemInstruction");
+    }), catalogs())) as {
+      tools?: unknown;
+      systemInstruction?: { parts: Array<{ text: string }> };
+    };
+    expect(body).not.toHaveProperty("cachedContent");
+    expect(body.tools).toBeTruthy();
+    expect(body.systemInstruction?.parts[0].text).toBe("Be concise");
   });
 
   it("keeps API keys in headers, not request bodies", () => {
@@ -234,6 +342,19 @@ describe("provider request adapters", () => {
       { text: "private", thought: true },
       { text: "visible" },
     ] } }] })).toBe("visible");
+  });
+
+  it("extracts image parts from upstream chunks", () => {
+    expect(extractChunkImages({ candidates: [{ content: { parts: [
+      { text: "here" },
+      { inlineData: { mimeType: "image/png", data: "QUJDRA==" } },
+    ] } }] })).toEqual([{ mimeType: "image/png", data: "QUJDRA==" }]);
+  });
+
+  it("extracts functionCall parts from upstream chunks", () => {
+    expect(extractChunkFunctionCalls({ candidates: [{ content: { parts: [
+      { functionCall: { name: "generate_image", args: { prompt: "a monkey" } } },
+    ] } }] })).toEqual([{ name: "generate_image", args: { prompt: "a monkey" } }]);
   });
 });
 
@@ -286,6 +407,71 @@ describe("chat API", () => {
     expect(response.text).toContain('"textCharacters":11');
     expect(response.text).toContain('"cachedContentTokenCount":500');
     expect(response.text).not.toContain("test-key");
+  });
+
+  it("streams image events from inlineData parts", async () => {
+    const fetchImpl = vi.fn(async () => sseResponse([
+      "data: {\"candidates\":[{\"content\":{\"parts\":[{\"inlineData\":{\"mimeType\":\"image/png\",\"data\":\"QUJDRA==\"}}]}}]}\n\n",
+      "data: {\"candidates\":[{\"finishReason\":\"STOP\"}]}\n\n",
+    ]));
+    const response = await request(createApp({ fetchImpl })).post("/api/chat/stream").send(validBody({ tool: "image" }));
+    expect(response.status).toBe(200);
+    expect(response.text).toContain("event: image");
+    expect(response.text).toContain('"mimeType":"image/png"');
+    expect(response.text).toContain('"data":"QUJDRA=="');
+  });
+
+  it("hands an Auto generate_image functionCall to the image model on the same stream", async () => {
+    const fetchImpl = vi.fn(async (url) => {
+      if (String(url).includes(IMAGE_MODEL_ID)) {
+        return sseResponse([
+          "data: {\"candidates\":[{\"content\":{\"parts\":[{\"inlineData\":{\"mimeType\":\"image/png\",\"data\":\"QUJDRA==\"}}]},\"finishReason\":\"STOP\"}]}\n\n",
+        ]);
+      }
+      return sseResponse([
+        "data: {\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"name\":\"generate_image\",\"args\":{\"prompt\":\"a monkey\"}}}]},\"finishReason\":\"STOP\"}]}\n\n",
+      ]);
+    });
+    const response = await request(createApp({ fetchImpl })).post("/api/chat/stream").send(validBody({
+      messages: [{ role: "user", content: "generate me image of monkey" }],
+    }));
+    expect(response.status).toBe(200);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(String(fetchImpl.mock.calls[1][0])).toContain(IMAGE_MODEL_ID);
+    const specialistBody = JSON.parse(fetchImpl.mock.calls[1][1].body);
+    expect(specialistBody.generationConfig.responseModalities).toEqual(["TEXT", "IMAGE"]);
+    expect(specialistBody.contents.at(-1).parts[0].text).toBe("a monkey");
+    expect(specialistBody).not.toHaveProperty("tools");
+    expect(response.text).toContain("event: tool");
+    expect(response.text).toContain('"id":"image"');
+    expect(response.text).toContain("event: image");
+    expect(response.text).toContain('"data":"QUJDRA=="');
+  });
+
+  it("hands an Auto generate_graph functionCall to the chat model with the Mermaid prompt", async () => {
+    const fetchImpl = vi.fn(async (url, init) => {
+      const body = JSON.parse(init.body);
+      if (body.systemInstruction?.parts?.[0]?.text?.includes("Mermaid")) {
+        return sseResponse([
+          "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"```mermaid\\ngraph TD; A-->B\\n```\"}]},\"finishReason\":\"STOP\"}]}\n\n",
+        ]);
+      }
+      return sseResponse([
+        "data: {\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"name\":\"generate_graph\",\"args\":{\"request\":\"auth flow\"}}}]},\"finishReason\":\"STOP\"}]}\n\n",
+      ]);
+    });
+    const response = await request(createApp({ fetchImpl })).post("/api/chat/stream").send(validBody({
+      messages: [{ role: "user", content: "draw a flowchart of auth" }],
+    }));
+    expect(response.status).toBe(200);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    const specialistBody = JSON.parse(fetchImpl.mock.calls[1][1].body);
+    expect(specialistBody.systemInstruction.parts[0].text).toContain(GRAPH_SYSTEM_PROMPT);
+    expect(specialistBody.contents.at(-1).parts[0].text).toBe("auth flow");
+    expect(specialistBody).not.toHaveProperty("tools");
+    expect(String(fetchImpl.mock.calls[1][0])).not.toContain(IMAGE_MODEL_ID);
+    expect(response.text).toContain('"id":"graph"');
+    expect(response.text).toContain("```mermaid");
   });
 
   it("normalizes upstream HTTP errors", async () => {

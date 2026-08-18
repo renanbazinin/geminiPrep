@@ -22,8 +22,23 @@ export function compactDebugValue(value: unknown, options: DebugCompactOptions):
     return value.map((entry) => compactDebugValue(entry, options));
   }
   if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    const imageData = record.data;
+    if (
+      typeof record.mimeType === "string"
+      && record.mimeType.startsWith("image/")
+      && typeof imageData === "string"
+      && imageData.length > 80
+    ) {
+      return Object.fromEntries(
+        Object.entries(record).map(([key, entry]) => [
+          key,
+          key === "data" ? `[${imageData.length} base64 characters omitted]` : compactDebugValue(entry, options),
+        ]),
+      );
+    }
     return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>)
+      Object.entries(record)
         .map(([key, entry]) => [key, compactDebugValue(entry, options)]),
     );
   }

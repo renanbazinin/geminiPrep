@@ -54,15 +54,19 @@ async function loadPayload(key: string): Promise<StoredAttachmentPayload | null>
   });
 }
 
-export async function deleteAttachmentPayloads(attachments: ChatAttachment[]): Promise<void> {
-  if (attachments.length === 0) return;
+export async function deleteStoredPayloads(keys: string[]): Promise<void> {
+  if (keys.length === 0) return;
   const database = await openDatabase();
   await new Promise<void>((resolve, reject) => {
     const transaction = database.transaction(STORE_NAME, "readwrite");
-    for (const attachment of attachments) transaction.objectStore(STORE_NAME).delete(attachment.storageKey);
+    for (const key of keys) transaction.objectStore(STORE_NAME).delete(key);
     transaction.oncomplete = () => resolve();
     transaction.onerror = () => reject(transaction.error ?? new Error("Could not remove local attachments."));
   });
+}
+
+export async function deleteAttachmentPayloads(attachments: ChatAttachment[]): Promise<void> {
+  await deleteStoredPayloads(attachments.map((attachment) => attachment.storageKey));
 }
 
 function extension(name: string): string {
@@ -175,7 +179,16 @@ export async function processAttachment(file: File): Promise<ChatAttachment> {
   };
 }
 
-async function blobToBase64(blob: Blob): Promise<string> {
+export async function storeInlineBlob(key: string, blob: Blob): Promise<void> {
+  await storePayload(key, { kind: "inlineData", blob });
+}
+
+export async function loadInlineBlob(key: string): Promise<Blob | null> {
+  const payload = await loadPayload(key);
+  return payload?.kind === "inlineData" ? payload.blob : null;
+}
+
+export async function blobToBase64(blob: Blob): Promise<string> {
   const bytes = new Uint8Array(await blob.arrayBuffer());
   const chunks: string[] = [];
   const chunkSize = 0x8000;

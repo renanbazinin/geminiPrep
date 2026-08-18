@@ -1,10 +1,13 @@
 import type {
+  ChatImageMimeType,
   ChatRequestFilePart,
   ChatStreamRequest,
+  ChatToolId,
   MessageRole,
   ProviderId,
 } from "../../shared/contracts.js";
 import type { ModelOption, RegionOption } from "../../shared/contracts.js";
+import { IMAGE_MODEL_ID, IMAGE_MODEL_REGION, isChatToolId, normalizeImageMimeType } from "../../shared/chat-tools.js";
 
 const MAX_HISTORY_MESSAGES = 200;
 const MAX_TOTAL_CHARACTERS = 1_000_000;
@@ -33,10 +36,18 @@ export function validateChatRequest(
     fail("provider must be either vertex or gemini.");
   }
   const providerId: ProviderId = provider;
+  let tool: ChatToolId | undefined;
+  if (input.tool !== undefined && input.tool !== "") {
+    tool = isChatToolId(input.tool) ? input.tool : fail("tool must be image or graph.");
+  }
+
   if (typeof input.model !== "string" || !input.model.trim()) fail("model is required.");
   const models = providerId === "vertex" ? catalogs.vertexModels : catalogs.geminiModels;
-  if (!models.some((model) => model.id === input.model)) {
-    fail(`Model ${input.model} is not configured for ${providerId}.`);
+  let model = input.model.trim();
+  if (tool === "image") {
+    model = IMAGE_MODEL_ID;
+  } else if (!models.some((candidate) => candidate.id === model)) {
+    fail(`Model ${model} is not configured for ${providerId}.`);
   }
 
   let region: string | undefined;
@@ -45,7 +56,7 @@ export function validateChatRequest(
     if (!catalogs.regions.some((candidate) => candidate.id === input.region)) {
       fail(`Region ${input.region} is not configured.`);
     }
-    region = input.region;
+    region = tool === "image" ? IMAGE_MODEL_REGION : input.region;
   }
 
   const temperature = Number(input.temperature);
@@ -58,7 +69,7 @@ export function validateChatRequest(
   }
 
   let thinkingLevel: "low" | "high" | undefined;
-  if (input.thinkingLevel !== undefined) {
+  if (tool !== "image" && input.thinkingLevel !== undefined) {
     if (input.thinkingLevel !== "low" && input.thinkingLevel !== "high") {
       fail("thinkingLevel must be low or high.");
     }
@@ -66,7 +77,7 @@ export function validateChatRequest(
   }
 
   let cachedContent: string | undefined;
-  if (input.cachedContent !== undefined && input.cachedContent !== "") {
+  if (!tool && input.cachedContent !== undefined && input.cachedContent !== "") {
     if (providerId !== "vertex") fail("cachedContent is only supported on Vertex AI.");
     if (typeof input.cachedContent !== "string" || !CACHED_CONTENT_PATTERN.test(input.cachedContent)) {
       fail("cachedContent must be a cachedContents resource name.");
@@ -98,13 +109,10 @@ export function validateChatRequest(
     if (!candidate || typeof candidate !== "object") fail(`messages[${index}] is invalid.`);
     const entry = candidate as Record<string, unknown>;
     if (!isRole(entry.role)) fail(`messages[${index}].role is invalid.`);
-    if (typeof entry.content !== "string" || !entry.content.trim()) {
-      fail(`messages[${index}].content is required.`);
-    }
+    if (typeof entry.content !== "string") fail(`messages[${index}].content is required.`);
     totalCharacters += entry.content.length;
     let files: ChatRequestFilePart[] | undefined;
     if (entry.files !== undefined) {
-      if (entry.role !== "user") fail(`messages[${index}].files are only supported for user messages.`);
       if (!Array.isArray(entry.files) || entry.files.length === 0 || entry.files.length > MAX_FILES_PER_MESSAGE) {
         fail(`messages[${index}].files must contain between 1 and ${MAX_FILES_PER_MESSAGE} files.`);
       }
@@ -121,6 +129,9 @@ export function validateChatRequest(
           fail(`messages[${index}].files[${fileIndex}].mimeType is invalid.`);
         }
         if (file.kind === "text") {
+          if (entry.role !== "user") {
+            fail(`messages[${index}].files[${fileIndex}] text parts are only supported for user messages.`);
+          }
           if (typeof file.text !== "string" || !file.text.trim()) {
             fail(`messages[${index}].files[${fileIndex}].text is required.`);
           }
@@ -128,8 +139,12 @@ export function validateChatRequest(
           return { kind: "text" as const, name: file.name, mimeType: file.mimeType, text: file.text };
         }
         if (file.kind === "inlineData") {
-          if (file.mimeType !== "application/pdf") {
-            fail(`messages[${index}].files[${fileIndex}] inlineData must be a PDF.`);
+          const imageMime = normalizeImageMimeType(file.mimeType);
+          if (file.mimeType !== "application/pdf" && !imageMime) {
+            fail(`messages[${index}].files[${fileIndex}] inlineData must be a PDF or image.`);
+          }
+          if (file.mimeType === "application/pdf" && entry.role !== "user") {
+            fail(`messages[${index}].files[${fileIndex}] PDFs are only supported on user messages.`);
           }
           if (typeof file.data !== "string" || !file.data || file.data.length % 4 !== 0 || /[^A-Za-z0-9+/=]/.test(file.data)) {
             fail(`messages[${index}].files[${fileIndex}].data must be valid base64.`);
@@ -138,13 +153,14 @@ export function validateChatRequest(
           return {
             kind: "inlineData" as const,
             name: file.name,
-            mimeType: "application/pdf" as const,
+            mimeType: (imageMime ?? "application/pdf") as "application/pdf" | ChatImageMimeType,
             data: file.data,
           };
         }
         fail(`messages[${index}].files[${fileIndex}].kind is invalid.`);
       });
     }
+    if (!entry.content.trim() && !files) fail(`messages[${index}].content is required.`);
     return { role: entry.role, content: entry.content, ...(files ? { files } : {}) };
   });
   if (messages.at(-1)?.role !== "user") fail("The last message must be from the user.");
@@ -160,12 +176,13 @@ export function validateChatRequest(
 
   return {
     provider: providerId,
-    model: input.model,
+    model,
     ...(region ? { region } : {}),
     ...(systemInstruction ? { systemInstruction } : {}),
     temperature,
     maxOutputTokens,
     ...(thinkingLevel ? { thinkingLevel } : {}),
+    ...(tool ? { tool } : {}),
     ...(cachedContent ? { cachedContent } : {}),
     messages,
   };
