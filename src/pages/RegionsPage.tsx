@@ -26,6 +26,7 @@ const copy = {
     copyMarkdown: "Copy Markdown", copied: "Copied", available: "Available", notServed: "Not served", denied: "Denied", timeout: "Timeout", elapsed: "Elapsed",
     rollup: "Available regions per model", none: "None in this selection", http: "HTTP status", latency: "Latency", retried: "Retried", yes: "Yes", no: "No", noResponse: "No response", endpoint: "Endpoint", providerMessage: "Provider message", close: "Close details",
     groups: { global: "Global", eu: "Europe", us: "United States", asia: "Asia Pacific", other: "Other" },
+    families: { "3.x": "Gemini 3", "2.5": "Gemini 2.5", image: "Flash Image", other: "Other" },
     verdicts: { available: "Available", quota: "Quota hit — model exists", unavailable: "Not served here", denied: "Permission denied", timeout: "Timed out", error: "Error" },
   },
   he: {
@@ -40,6 +41,7 @@ const copy = {
     copyMarkdown: "העתקת Markdown", copied: "הועתק", available: "זמין", notServed: "לא מוגש", denied: "נדחה", timeout: "חריגה מהזמן", elapsed: "משך",
     rollup: "אזורים זמינים לפי מודל", none: "אין באזורי הבחירה", http: "סטטוס HTTP", latency: "זמן תגובה", retried: "ניסיון חוזר", yes: "כן", no: "לא", noResponse: "אין תגובה", endpoint: "נקודת קצה", providerMessage: "הודעת הספק", close: "סגירת פרטים",
     groups: { global: "גלובלי", eu: "אירופה", us: "ארצות הברית", asia: "אסיה והפסיפיק", other: "אחר" },
+    families: { "3.x": "Gemini 3", "2.5": "Gemini 2.5", image: "Flash Image", other: "אחר" },
     verdicts: { available: "זמין", quota: "מכסה — המודל קיים", unavailable: "לא מוגש כאן", denied: "הרשאה נדחתה", timeout: "חריגה מהזמן", error: "שגיאה" },
   },
 } as const;
@@ -99,6 +101,13 @@ export function RegionsPage() {
     const groups = new Map<string, RegionOption[]>();
     for (const region of config?.regions ?? []) {
       groups.set(region.group, [...(groups.get(region.group) ?? []), region]);
+    }
+    return [...groups.entries()];
+  }, [config]);
+  const groupedModels = useMemo(() => {
+    const groups = new Map<string, ModelOption[]>();
+    for (const model of config?.models ?? []) {
+      groups.set(model.family, [...(groups.get(model.family) ?? []), model]);
     }
     return [...groups.entries()];
   }, [config]);
@@ -228,16 +237,21 @@ export function RegionsPage() {
           <div>
             <div className="picker-title"><span>{t.models}</span><small>{modelIds.size} {t.selected}</small></div>
             <div className="model-picker">
-              {(config?.models ?? []).map((model) => (
-                <label className={`model-check${modelIds.has(model.id) ? " model-check-on" : ""}`} key={model.id}>
-                  <input
-                    type="checkbox"
-                    checked={modelIds.has(model.id)}
-                    onChange={() => toggle(modelIds, setModelIds, model.id)}
-                    disabled={running}
-                  />
-                  <span><strong>{model.label}</strong><small>{model.id}</small></span>
-                </label>
+              {groupedModels.map(([family, models]) => (
+                <div className="region-group" key={family}>
+                  <span>{t.families[family as keyof typeof t.families] ?? family}</span>
+                  {models.map((model) => (
+                    <label className={`model-check${modelIds.has(model.id) ? " model-check-on" : ""}`} key={model.id}>
+                      <input
+                        type="checkbox"
+                        checked={modelIds.has(model.id)}
+                        onChange={() => toggle(modelIds, setModelIds, model.id)}
+                        disabled={running}
+                      />
+                      <span><strong>{model.label}</strong><small>{model.id}</small></span>
+                    </label>
+                  ))}
+                </div>
               ))}
             </div>
           </div>

@@ -10,11 +10,13 @@ import {
   VERTEX_MODELS,
   VERTEX_REGIONS,
   envPositiveInt,
+  isImageModelId,
 } from "./catalog.js";
 
 export const VERTEX_PROBE_PROMPT = "ping";
 export const VERTEX_PROBE_TIMEOUT_MS = 30_000;
 export const VERTEX_PROBE_CONCURRENCY = 8;
+export const VERTEX_IMAGE_PROBE_MAX_OUTPUT_TOKENS = 4096;
 
 export function resolveProbeTimeoutMs(): number {
   return envPositiveInt("VERTEX_PROBE_TIMEOUT_MS", VERTEX_PROBE_TIMEOUT_MS);
@@ -42,10 +44,18 @@ export function vertexGenerateContentUrl(target: {
   return `${vertexHost(target.region)}/v1/projects/${target.project}/locations/${target.region}/publishers/google/models/${target.model}:${operation}`;
 }
 
-export function buildVertexProbeBody(prompt = VERTEX_PROBE_PROMPT): Record<string, unknown> {
+export function buildVertexProbeBody(
+  prompt = VERTEX_PROBE_PROMPT,
+  modelId?: string,
+): Record<string, unknown> {
+  const image = Boolean(modelId && isImageModelId(modelId));
   return {
     contents: [{ role: "user", parts: [{ text: prompt }] }],
-    generationConfig: { maxOutputTokens: 16, temperature: 0 },
+    generationConfig: {
+      maxOutputTokens: image ? VERTEX_IMAGE_PROBE_MAX_OUTPUT_TOKENS : 16,
+      temperature: 0,
+      ...(image ? { responseModalities: ["TEXT", "IMAGE"] } : {}),
+    },
   };
 }
 
@@ -107,7 +117,7 @@ export async function probeRegionModel(options: {
     const response = await fetchImpl(url, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify(buildVertexProbeBody(prompt)),
+      body: JSON.stringify(buildVertexProbeBody(prompt, model.id)),
       signal: AbortSignal.timeout(timeoutMs),
     });
     status = response.status;

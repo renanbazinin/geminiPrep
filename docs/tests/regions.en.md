@@ -33,7 +33,7 @@ The Regions test uses OAuth/ADC. `GEMINI_API_KEY` is unrelated to this test.
 | US multi-region | `aiplatform.us.rep.googleapis.com` |
 | Single region | `{region}-aiplatform.googleapis.com` |
 
-Each call sends `ping` with temperature `0` and a maximum of 16 output tokens. This keeps the request small while exercising the real content-generation endpoint.
+Each call sends `ping` with temperature `0` and a maximum of 16 output tokens. Flash Image models also set `responseModalities: ["TEXT", "IMAGE"]` and a higher token cap, because a text-only request would fail even in a region that serves the model.
 
 ## Verdicts
 

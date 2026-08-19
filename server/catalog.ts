@@ -1,5 +1,7 @@
 import type { ModelOption, RegionOption } from "../shared/contracts.js";
-export { IMAGE_MODEL_ID } from "../shared/chat-tools.js";
+import { IMAGE_MODEL_ID } from "../shared/chat-tools.js";
+
+export { IMAGE_MODEL_ID };
 
 export const VERTEX_REGIONS: RegionOption[] = [
   { id: "global", label: "Global endpoint", group: "global" },
@@ -34,6 +36,12 @@ export const VERTEX_MODELS: ModelOption[] = [
   { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro", family: "2.5" },
   { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash", family: "2.5" },
   { id: "gemini-2.5-flash-lite", label: "Gemini 2.5 Flash-Lite", family: "2.5" },
+];
+
+export const VERTEX_IMAGE_MODELS: ModelOption[] = [
+  { id: IMAGE_MODEL_ID, label: "Gemini 3.1 Flash Image", family: "image" },
+  { id: "gemini-3.1-flash-lite-image", label: "Gemini 3.1 Flash-Lite Image", family: "image" },
+  { id: "gemini-2.5-flash-image", label: "Gemini 2.5 Flash Image", family: "image" },
 ];
 
 export const GEMINI_MODELS: ModelOption[] = [
@@ -83,7 +91,12 @@ export function extendCatalog<T extends { id: string }>(
   return ids.map((id) => known.get(id) ?? create(id));
 }
 
+export function isImageModelId(id: string): boolean {
+  return id.includes("-image");
+}
+
 function modelFamily(id: string): string {
+  if (isImageModelId(id)) return "image";
   if (id.startsWith("gemini-3")) return "3.x";
   if (id.startsWith("gemini-2")) return "2.5";
   return "other";
@@ -98,7 +111,8 @@ export function resolveProbeRegions(): RegionOption[] {
 }
 
 export function resolveProbeModels(): ModelOption[] {
-  return extendCatalog(envIdList("VERTEX_PROBE_MODELS"), VERTEX_MODELS, (id) => ({
+  const catalog = [...VERTEX_MODELS, ...VERTEX_IMAGE_MODELS];
+  return extendCatalog(envIdList("VERTEX_PROBE_MODELS"), catalog, (id) => ({
     id,
     label: id,
     family: modelFamily(id),

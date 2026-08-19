@@ -336,8 +336,9 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 .select-chip { display: inline-flex; align-items: center; padding: 6px 8px; border: 1px solid var(--border); border-radius: 7px; background: #111419; color: var(--muted); font: 0.7rem "Cascadia Code", Consolas, monospace; cursor: pointer; }
 .select-chip input { position: absolute; opacity: 0; pointer-events: none; }
 .select-chip-on { border-color: #625a91; background: #25213a; color: #d6d0ff; }
-.model-picker { max-height: 350px; padding-right: 4px; display: flex; flex-direction: column; gap: 6px; overflow-y: auto; }
+.model-picker { max-height: 420px; padding-right: 4px; display: flex; flex-direction: column; gap: 15px; overflow-y: auto; }
 .model-check { display: grid; grid-template-columns: 16px minmax(0, 1fr); align-items: center; gap: 9px; padding: 9px; border: 1px solid var(--border-soft); border-radius: 8px; cursor: pointer; }
+.region-group .model-check + .model-check { margin-top: 6px; }
 .model-check:hover, .model-check-on { background: var(--surface-2); border-color: var(--border); }
 .model-check input { accent-color: var(--accent); }
 .model-check span { min-width: 0; display: flex; flex-direction: column; gap: 2px; }

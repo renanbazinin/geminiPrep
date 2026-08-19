@@ -4,11 +4,13 @@ import request from "supertest";
 import {
   BUILTIN_DEFAULT_REGION_IDS,
   VERTEX_MODELS,
+  VERTEX_IMAGE_MODELS,
   VERTEX_REGIONS,
   inferRegionGroup,
   resolveDefaultRegionIds,
   resolveProbeModels,
   resolveProbeRegions,
+  resolveVertexChatModels,
   resolveVertexProject,
 } from "./catalog.js";
 import {
@@ -22,6 +24,7 @@ import {
   runRegionMatrix,
   selectByIds,
   summarizeMatrix,
+  VERTEX_IMAGE_PROBE_MAX_OUTPUT_TOKENS,
   vertexErrorMessage,
   vertexGenerateContentUrl,
   vertexHost,
@@ -82,7 +85,14 @@ describe("vertexHost / url", () => {
   it("sends camelCase generationConfig, unlike the Developer API", () => {
     const body = buildVertexProbeBody("ping");
     expect(body.generationConfig.maxOutputTokens).toBe(16);
+    expect(body.generationConfig.responseModalities).toBeUndefined();
     expect(body.contents[0].parts[0].text).toBe("ping");
+  });
+
+  it("asks image models for TEXT+IMAGE so a region miss is not a bad request", () => {
+    const body = buildVertexProbeBody("ping", "gemini-3.1-flash-lite-image");
+    expect(body.generationConfig.responseModalities).toEqual(["TEXT", "IMAGE"]);
+    expect(body.generationConfig.maxOutputTokens).toBe(VERTEX_IMAGE_PROBE_MAX_OUTPUT_TOKENS);
   });
 });
 
@@ -154,6 +164,19 @@ describe("probeRegionModel", () => {
     expect(cell.latencyMs).toBe(120);
     expect(fetchImpl.mock.calls[0][1].headers.Authorization).toBe("Bearer tok");
     expect(cell.url).toContain("europe-west4-aiplatform");
+  });
+
+  it("sends responseModalities when probing a Flash Image model", async () => {
+    const fetchImpl = vi.fn(async () => vertexOk());
+    await probeRegionModel({
+      token: "t",
+      project: "p",
+      region,
+      model: { id: "gemini-2.5-flash-image", label: "Gemini 2.5 Flash Image" },
+      fetchImpl,
+    });
+    const body = JSON.parse(fetchImpl.mock.calls[0][1].body);
+    expect(body.generationConfig.responseModalities).toEqual(["TEXT", "IMAGE"]);
   });
 
   it("keeps the API message when a region does not serve the model", async () => {
@@ -245,7 +268,13 @@ describe("env-driven catalogs", () => {
 
   it("uses the built-in catalogs when nothing is configured", () => {
     expect(resolveProbeRegions()).toEqual(VERTEX_REGIONS);
-    expect(resolveProbeModels()).toEqual(VERTEX_MODELS);
+    expect(resolveProbeModels()).toEqual([...VERTEX_MODELS, ...VERTEX_IMAGE_MODELS]);
+    expect(resolveProbeModels().map((m) => m.id)).toEqual(expect.arrayContaining([
+      "gemini-3.1-flash-image",
+      "gemini-3.1-flash-lite-image",
+      "gemini-2.5-flash-image",
+    ]));
+    expect(resolveVertexChatModels().some((m) => m.id.includes("-image"))).toBe(false);
     expect(resolveDefaultRegionIds()).toEqual(BUILTIN_DEFAULT_REGION_IDS);
     expect(resolveProbeTimeoutMs()).toBe(30000);
     expect(resolveProbeConcurrency()).toBe(8);
@@ -261,10 +290,11 @@ describe("env-driven catalogs", () => {
   });
 
   it("probes ids it has no label for, so new models need no code change", () => {
-    process.env.VERTEX_PROBE_MODELS = "gemini-4-pro";
+    process.env.VERTEX_PROBE_MODELS = "gemini-4-pro,gemini-4-flash-image";
     process.env.VERTEX_PROBE_REGIONS = "europe-west12";
     expect(resolveProbeModels()).toEqual([
       { id: "gemini-4-pro", label: "gemini-4-pro", family: "other" },
+      { id: "gemini-4-flash-image", label: "gemini-4-flash-image", family: "image" },
     ]);
     expect(resolveProbeRegions()).toEqual([
       { id: "europe-west12", label: "europe-west12", group: "eu" },
