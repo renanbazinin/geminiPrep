@@ -26,6 +26,7 @@ export const VERTEX_REGIONS: RegionOption[] = [
 ];
 
 export const VERTEX_MODELS: ModelOption[] = [
+  { id: "gemini-3.8-flash", label: "Gemini 3.8 Flash", family: "3.x" },
   { id: "gemini-3.7-flash", label: "Gemini 3.7 Flash", family: "3.x" },
   { id: "gemini-3.6-flash", label: "Gemini 3.6 Flash", family: "3.x" },
   { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash", family: "3.x" },
@@ -45,6 +46,7 @@ export const VERTEX_IMAGE_MODELS: ModelOption[] = [
 ];
 
 export const GEMINI_MODELS: ModelOption[] = [
+  { id: "gemini-3.8-flash", label: "Gemini 3.8 Flash", family: "3.x" },
   { id: "gemini-3.7-flash", label: "Gemini 3.7 Flash", family: "3.x" },
   { id: "gemini-3.6-flash", label: "Gemini 3.6 Flash", family: "3.x" },
   { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash", family: "3.x" },
