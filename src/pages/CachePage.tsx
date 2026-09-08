@@ -43,6 +43,9 @@ const copy = {
     back: "All tests", eyebrow: "GEMINI 3 · EXPLICIT CONTEXT CACHE", title: "Context cache lab",
     intro: "Create a real Vertex cache, inspect what the service stores, change its expiration, then use it and verify the cached token count.",
     guide: "Read cache guide", warningTitle: "Explicit cache storage is billable", warning: "Creation and use call Vertex AI. Storage continues until you delete the cache or it expires.",
+    nameTitle: "Remember my name", nameHelp: "Enter your name and prepare this example. Then click Create cache below, followed by Generate with cache to ask ‘What is my name?’.",
+    nameLabel: "Your name", namePrepare: "Prepare name test", namePadding: "A name alone is too short for explicit caching. This example adds background text to meet the minimum size and sets a five-minute expiration.",
+    namePrepared: "Name test prepared. Review the text below, then click Create cache. Existing cloud caches remain available in the cache list until they expire or you delete them.",
     config: "Configure the cache", configHelp: "Model, content, instructions, display name, and encryption are immutable after creation.",
     project: "Google Cloud project", model: "Gemini 3 model", location: "Location", displayName: "Display name", immutable: "immutable",
     system: "System instruction", systemPlaceholder: "Optional instruction shared by every request that uses this cache…",
@@ -77,6 +80,9 @@ const copy = {
     back: "כל הבדיקות", eyebrow: "GEMINI 3 · מטמון הקשר מפורש", title: "מעבדת מטמון הקשר",
     intro: "צור מטמון אמיתי ב־Vertex, בדוק מה השירות שומר, שנה את זמן הפקיעה, השתמש בו ואמת את מספר הטוקנים שנקראו מהמטמון.",
     guide: "פתיחת מדריך המטמון", warningTitle: "אחסון מטמון מפורש כרוך בחיוב", warning: "יצירה ושימוש קוראים ל־Vertex AI. האחסון ממשיך עד למחיקה או לפקיעה.",
+    nameTitle: "זכור את השם שלי", nameHelp: "הזן את שמך והכן את הדוגמה. לאחר מכן לחץ על יצירת מטמון למטה, ואז על יצירה עם המטמון כדי לשאול ‘מה השם שלי?’.",
+    nameLabel: "השם שלך", namePrepare: "הכנת בדיקת השם", namePadding: "שם בלבד קצר מדי למטמון מפורש. הדוגמה מוסיפה טקסט רקע כדי להגיע לגודל המינימלי ומגדירה פקיעה אחרי חמש דקות.",
+    namePrepared: "בדיקת השם מוכנה. בדוק את הטקסט למטה ולחץ על יצירת מטמון. מטמונים קיימים בענן זמינים ברשימה עד לפקיעה או למחיקה.",
     config: "הגדרת המטמון", configHelp: "המודל, התוכן, ההוראה, השם וההצפנה אינם ניתנים לשינוי אחרי היצירה.",
     project: "פרויקט Google Cloud", model: "מודל Gemini 3", location: "מיקום", displayName: "שם תצוגה", immutable: "בלתי ניתן לשינוי",
     system: "הוראת מערכת", systemPlaceholder: "הוראה אופציונלית המשותפת לכל בקשה שמשתמשת במטמון…",
@@ -184,6 +190,7 @@ export function CachePage() {
   const [displayName, setDisplayName] = useState(defaultDisplayName);
   const [systemInstruction, setSystemInstruction] = useState("");
   const [content, setContent] = useState("");
+  const [testName, setTestName] = useState("");
   const [files, setFiles] = useState<CacheFileEntry[]>([]);
   const [gcsUri, setGcsUri] = useState("");
   const [mimeType, setMimeType] = useState("application/pdf");
@@ -226,7 +233,15 @@ export function CachePage() {
   }, []);
 
   useEffect(() => {
-    setPrompt(language === "he" ? "מהי תדירות בדיקת העלויות?" : "How often must service owners review cost?");
+    setPrompt((current) => {
+      if (current === "What is my name?" || current === "מה השם שלי?") {
+        return language === "he" ? "מה השם שלי?" : "What is my name?";
+      }
+      if (current === "How often must service owners review cost?" || current === "מהי תדירות בדיקת העלויות?") {
+        return language === "he" ? "מהי תדירות בדיקת העלויות?" : "How often must service owners review cost?";
+      }
+      return current;
+    });
     const [first, second] = implicitQuestions(language);
     setQuestionOne(first);
     setQuestionTwo(second);
@@ -308,6 +323,28 @@ export function CachePage() {
     setError(null);
     setNotice(null);
     setDeleteArmed(false);
+  }
+
+  function prepareNameTest() {
+    const name = testName.trim();
+    if (!name || busy) return;
+    const background = Array.from({ length: 140 }, (_, index) =>
+      `Background note ${index + 1}: A reference document can supply shared context for several independent questions. Each question may focus on a different fact in that document. The profile above contains the user's name. These background notes contain no additional personal details. They only make this demonstration document long enough to cache.`,
+    ).join("\n\n");
+    setContent(`User profile:\n${JSON.stringify({ name }, null, 2)}\n\nBackground text for the cache size requirement:\n${background}`);
+    setSystemInstruction(language === "he"
+      ? "ענה בקצרה בעברית על סמך פרופיל המשתמש שבמטמון. אם נשאלת לשמו, השתמש בשדה name בדיוק כפי שהוא."
+      : "Answer briefly using the cached user profile. When asked for the user's name, use the name field exactly as written.");
+    setPrompt(language === "he" ? "מה השם שלי?" : "What is my name?");
+    setDisplayName("gemini-prep-name-test");
+    setFiles([]);
+    setExpirationMode("ttl");
+    setTtlSeconds(300);
+    setResource(null);
+    setUseResult(null);
+    setError(null);
+    setDeleteArmed(false);
+    setNotice(t.namePrepared);
   }
 
   async function createCache() {
@@ -465,6 +502,15 @@ export function CachePage() {
       </header>
 
       <div className="cache-billing-warning"><AlertTriangle size={19} /><div><strong>{t.warningTitle}</strong><p>{t.warning}</p></div></div>
+
+      <section className="test-panel">
+        <div className="test-panel-heading"><div><Sparkles size={20} /><div><h2>{t.nameTitle}</h2><p>{t.nameHelp}</p></div></div></div>
+        <div className="cache-fields-grid">
+          <label className="form-field"><span>{t.nameLabel}</span><input value={testName} onChange={(event) => setTestName(event.target.value)} disabled={Boolean(busy)} autoComplete="off" /></label>
+        </div>
+        <p className="cache-subsection-help">{t.namePadding}</p>
+        <button className="secondary-button" onClick={prepareNameTest} disabled={Boolean(busy) || !config || !testName.trim()}><Sparkles size={15} />{t.namePrepare}</button>
+      </section>
 
       <section className="test-panel">
         <div className="test-panel-heading">

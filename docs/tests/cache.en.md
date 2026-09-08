@@ -1,6 +1,16 @@
 # Vertex AI Context Cache Lab — English Guide
 
-> Reviewed against the Google Cloud documentation on 2026-08-14. Model support, limits, and pricing can change; follow the linked official pages before production use.
+> Reviewed against the repository and Google Cloud documentation on 2026-09-08. Includes a live Gemini 3.6 Flash cache test in `eu`. Model support, limits, and pricing can change; follow the linked official pages before production use.
+
+## Quick test: remember my name
+
+1. Open `/tests/cache` and enter your name under **Remember my name**.
+2. Click **Prepare name test**. This fills the editable cache text with your profile and background text for the minimum token requirement, prepares **What is my name?**, and sets a five-minute TTL. Preparation makes no cloud calls.
+3. Select **EU multi-region · eu** and `gemini-3.6-flash`, review the project, then click **Create cache**.
+4. Under **Use the cache**, click **Generate with cache**. The new request contains the question and cache reference; it does not resend your name or the background text.
+5. Check both the model's answer and **Cache-hit evidence**: a positive `cachedContentTokenCount` confirms cached input was used. You can edit the question and generate again using the same cache.
+
+This test runs in the cache lab. The regular chat does not automatically select this cache. To change the saved name, prepare and create a new cache; existing caches remain in the list until deleted or expired. Creation, storage, and generation are billable.
 
 ## What this lab teaches
 
@@ -11,7 +21,7 @@ This lab demonstrates the complete **explicit cache** lifecycle:
 1. Create a `CachedContent` resource.
 2. Inspect the metadata and server-reported token count.
 3. Use its resource name in a generation request.
-4. prove the hit with `usageMetadata.cachedContentTokenCount`.
+4. Prove the hit with `usageMetadata.cachedContentTokenCount` and check answer correctness separately.
 5. Extend or replace its expiration.
 6. Delete it when the experiment is finished.
 
@@ -30,15 +40,15 @@ Use explicit caching when you need a predictable resource lifecycle and repeated
 
 Implicit hits are not a mystery field. Vertex reports them in `usageMetadata.cachedContentTokenCount` on a later request whose input starts with a recent, large, identical prefix. The field is omitted or `0` when there was no hit.
 
-The cache lab’s **See implicit cache** action sends four `generateContent` calls: the large document is `systemInstruction`, the two questions alternate, and there is no `cachedContent` resource. Compare the usage objects. The first call often writes the prefix; later calls can show a hit. Gemini 3 often needs a third call.
+The cache lab’s **See implicit cache** action sends four `generateContent` calls: the large document is `systemInstruction`, the two questions alternate, and there is no `cachedContent` resource. Compare the usage objects. Later calls can show a hit; no particular call number guarantees one.
 
-In chat, open **Debug trace** on the assistant turn. The summary chip reads `implicit · N` on a hit, or `no cache hit` when the field is missing. That last state is a miss, not “cache not requested” — implicit caching is always eligible on supported models.
+In chat, open **Debug trace** on the assistant turn. The summary chip reads `implicit · N` on a hit, or `no cache hit` when the field is missing. That last state reports no observed hit; it does not by itself establish whether project policy permits implicit caching.
 
-A miss after a large shared prefix is normal. Implicit caching is best-effort. Send the next turn immediately, keep the shared document first, and stay above the Gemini 3 minimum of 4,096 tokens.
+A miss after a large shared prefix is normal. Implicit caching is best-effort. Keep the document first and send related requests close together using the same model and location. The current overview lists a 6,144-token implicit minimum for Gemini 3 Flash Preview, 3.1 Pro Preview, 3.7 Flash, and 3.8 Flash; the general Gemini 3 threshold is 4,096. Check the selected model instead of assuming the explicit minimum applies. Project policy can disable implicit caching. [Source: cache overview](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/context-cache/context-cache-overview).
 
 ## Gemini 3 series relevance
 
-The default model picker follows the explicit-cache support table from the official overview. At the review date it includes:
+The repository's default explicit-cache picker currently includes the following models. This is the app's configured catalog, not an exhaustive list of Google's current support:
 
 - `gemini-3.6-flash`
 - `gemini-3.5-flash-lite`
@@ -68,25 +78,61 @@ The server obtains the OAuth token. Credentials and access tokens are never retu
 
 ## Resource and endpoint shape
 
-Collection name:
+**EU multi-region uses `eu` in the resource path and `aiplatform.eu.rep.googleapis.com` as the hostname.** Do not construct `eu-aiplatform.googleapis.com` from the single-region pattern. The repository already handles this in `server/region-probe.ts` → `vertexHost()`. [Source: multi-region endpoints](https://docs.cloud.google.com/gemini-enterprise-agent-platform/resources/locations#multi-region_endpoints).
+
+| Location | Hostname | Path location |
+| --- | --- | --- |
+| EU multi-region | `aiplatform.eu.rep.googleapis.com` | `locations/eu` |
+| US multi-region | `aiplatform.us.rep.googleapis.com` | `locations/us` |
+| Single region, for example Netherlands | `europe-west4-aiplatform.googleapis.com` | `locations/europe-west4` |
+| Global | `aiplatform.googleapis.com` | `locations/global` |
+
+The complete EU create/list URL is:
 
 ```text
-projects/{project}/locations/{location}/cachedContents
+https://aiplatform.eu.rep.googleapis.com/v1/projects/PROJECT_ID/locations/eu/cachedContents
 ```
 
-Regional REST hostname:
+Generation with an EU cache uses:
 
 ```text
-https://{location}-aiplatform.googleapis.com/v1/projects/{project}/locations/{location}/cachedContents
+https://aiplatform.eu.rep.googleapis.com/v1/projects/PROJECT_ID/locations/eu/publishers/google/models/gemini-3.6-flash:generateContent
 ```
 
-Global REST hostname:
+The cache reference inside the JSON body is a **resource name, not a URL**:
 
 ```text
-https://aiplatform.googleapis.com/v1/projects/{project}/locations/global/cachedContents
+projects/PROJECT_NUMBER/locations/eu/cachedContents/CACHE_ID
 ```
 
-Generation with the cache uses the selected publisher model’s `:generateContent` endpoint and places the returned cache resource name in the `cachedContent` field.
+Copy the returned `name` exactly. Google can return a numeric project number even when creation used a textual project ID; those can identify the same project. Do not substitute the display name or rebuild the returned identifier. Use the same project, `eu` location, and model used at creation. [Source: using a cache](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/context-cache/context-cache-use).
+
+For all operations below, use HTTPS with `Authorization: Bearer ACCESS_TOKEN`. POST/PATCH JSON bodies also need `Content-Type: application/json`. Obtain the token on the server through ADC; never put it in the browser UI.
+
+| Operation | Method | URL after `https://aiplatform.eu.rep.googleapis.com/v1/` |
+| --- | --- | --- |
+| Create | POST | `projects/PROJECT_ID/locations/eu/cachedContents` |
+| List | GET | `projects/PROJECT_ID/locations/eu/cachedContents?pageSize=100` |
+| Inspect metadata | GET | `RETURNED_CACHE_NAME` |
+| Extend expiration | PATCH | `RETURNED_CACHE_NAME?updateMask=ttl` with `{"ttl":"300s"}` |
+| Generate | POST | `projects/PROJECT_ID/locations/eu/publishers/google/models/MODEL_ID:generateContent` |
+| Delete | DELETE | `RETURNED_CACHE_NAME` |
+
+Here `RETURNED_CACHE_NAME` includes `projects/.../locations/eu/cachedContents/...`; do not add a second project prefix. Streaming uses the same generation path with `:streamGenerateContent?alt=sse`. Listing may return `nextPageToken`; a full inventory must paginate. The current lab fetches only the first page (up to 100 resources).
+
+## Complete EU multi-region workflow
+
+1. Complete the ADC/project prerequisites above. `GEMINI_API_KEY` is for the Developer API and does not authenticate this Vertex lab.
+2. Choose **EU multi-region · eu** on the cache page. For an EU default after server restart, set `VERTEX_CACHE_DEFAULT_REGION=eu` in `.env`. If you override `VERTEX_PROBE_REGIONS`, include `eu` because the cache picker shares that catalog. The separate chat setting/default does not change an already created cache.
+3. Choose a model supporting both explicit caching and `eu`. This session verified `gemini-3.6-flash`; its official model page lists EU multi-region availability. A successful Regions probe alone tests generation, not cache creation. [Source: Gemini 3.6 Flash](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/3-6-flash).
+4. Prepare the complete stable material **before creation**: instructions, profile, documents, and files. Put instructions in **System instruction** and facts under clear headings in **Text to cache**. The name preset adds padding for a small demonstration; padding is not a production savings strategy. Use genuinely reusable material in an application.
+5. Select **TTL** and `300` seconds for a short test. Review **Request field preview**, then click **Create cache**. Save the returned `name`, `model`, `expireTime`, and stored-token count. The preview truncates long text for display; the server sends the full content. Metadata inspection does not return the original body because `contents` and `systemInstruction` are input-only fields. Keep your source separately if you need to audit or recreate it. [Source: REST resource](https://docs.cloud.google.com/gemini-enterprise-agent-platform/reference/rest/v1/projects.locations.cachedContents).
+6. In **Use the cache**, ask a new question such as **What is my name?**, then **Generate with cache**. Do not repeat the answer in the question. The lab sends the cache reference and this question; it does not send prior lab questions or answers. In a conversational integration, send any required uncached history explicitly.
+7. Check two independent outcomes: a positive `cachedContentTokenCount`, and a correct answer grounded in the cached facts. Save the exact question and cache name when comparing runs. Output and thinking can vary even when the same cache is used.
+8. For another question, keep the same cache reference and change the prompt. For different cached content or instructions, click **Create cache** again after editing. Editing the form, refreshing metadata, or updating expiration does not modify the existing cached material.
+9. Extend TTL **before** expiration if necessary. Delete the cache when finished, or let it expire. Replaced caches remain billable until deleted or expired; creating a replacement does not delete its predecessor.
+
+`eu` is one logical multi-region location, not an instruction to fan out calls across every `europe-*` region. EU routing constrains the service's ML processing to the EU jurisdiction described by Google. It does not mean the same cache can be addressed through `europe-west4`, `global`, or `us`, nor that your browser, server logs, source bucket, and every other service automatically have the same residency. London and Zürich are European locations outside the EU. For an EU-bound workflow, keep requests on `eu` and do not silently fall back to `global`. [Source: locations](https://docs.cloud.google.com/gemini-enterprise-agent-platform/resources/locations).
 
 ## Create request fields
 
@@ -105,20 +151,20 @@ The page’s request preview shows the actual field shape before creation.
 
 `ttl` and `expireTime` form a union: send one, not both. If no expiration is supplied, the documented default TTL is 60 minutes. The minimum expiration is one minute and the documentation does not state a maximum.
 
-Example with inline text:
+EU creation body (replace the sample text with your complete material meeting the token minimum; this abbreviated JSON alone is too short):
 
 ```json
 {
-  "model": "projects/PROJECT/locations/global/publishers/google/models/gemini-3.6-flash",
-  "displayName": "policy-learning-cache",
+  "model": "projects/PROJECT_ID/locations/eu/publishers/google/models/gemini-3.6-flash",
+  "displayName": "eu-profile-test",
   "systemInstruction": {
-    "parts": [{ "text": "Answer only from the cached policy." }]
+    "parts": [{ "text": "Answer using the entire cached context, including the user profile and reference sections. Return the profile name when asked for the user's name." }]
   },
   "contents": [{
     "role": "user",
-    "parts": [{ "text": "A sufficiently long shared document…" }]
+    "parts": [{ "text": "USER PROFILE\nName: Avi goldstein\n\nREFERENCE MATERIAL\nReplace this line with your complete reference material." }]
   }],
-  "ttl": "3600s"
+  "ttl": "300s"
 }
 ```
 
@@ -126,7 +172,7 @@ Example mixing text with files. `parts` is an ordered list, so one cache can hol
 
 ```json
 {
-  "model": "projects/PROJECT/locations/us-central1/publishers/google/models/gemini-3.6-flash",
+  "model": "projects/PROJECT_ID/locations/eu/publishers/google/models/gemini-3.6-flash",
   "contents": [{
     "role": "user",
     "parts": [
@@ -145,7 +191,7 @@ Example mixing text with files. `parts` is an ordered list, so one cache can hol
       }
     ]
   }],
-  "expireTime": "2026-08-14T15:30:00Z"
+  "ttl": "300s"
 }
 ```
 
@@ -155,7 +201,7 @@ Example mixing text with files. `parts` is an ordered list, so one cache can hol
 
 - Gemini 3 explicit caches require at least 4,096 input tokens according to the current overview.
 - Inline/blob/text cached content is limited to 10 MB.
-- Base64 `inlineData` inflates the file by about a third and must fit in one request; the lab caps it at 15 MB per create call.
+- The lab allows up to 15 MB of decoded inline files, but that local guard does not override Google's 10 MB cache-content limit. Base64 adds roughly a third to transport size; use GCS when inline content is too large.
 - Use Cloud Storage for larger content.
 - The exact usable media formats and limits also depend on the model.
 - A cache belongs to one project and location. Use it through a compatible model endpoint in that location.
@@ -166,10 +212,10 @@ A generation request references the cache by name:
 
 ```json
 {
-  "cachedContent": "projects/PROJECT/locations/global/cachedContents/CACHE_ID",
+  "cachedContent": "projects/PROJECT_NUMBER/locations/eu/cachedContents/CACHE_ID",
   "contents": [{
     "role": "user",
-    "parts": [{ "text": "How often should cost be reviewed?" }]
+    "parts": [{ "text": "What is my name?" }]
   }]
 }
 ```
@@ -180,7 +226,7 @@ The lab highlights this response field:
 usageMetadata.cachedContentTokenCount
 ```
 
-A positive cached-token count is the provider’s evidence that cached input was used. Latency alone is not proof: network variance, capacity, output length, and warm infrastructure can all change timing.
+A positive cached-token count is the provider’s evidence that cached input was used, not that the answer is correct. Latency alone is not proof: network variance, capacity, output length, and warm infrastructure can all change timing. Do not resend cached `systemInstruction`, `tools`, or `toolConfig` in the generation request. [Source: use restrictions](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/context-cache/context-cache-use#context_cache_use_restrictions).
 
 Also compare:
 
@@ -189,18 +235,21 @@ Also compare:
 - `totalTokenCount`: total usage reported by the provider.
 - `thoughtsTokenCount`: Gemini 3 thinking tokens. These are drawn from `maxOutputTokens` but are *not* included in `candidatesTokenCount`, so a reply can stop at `MAX_TOKENS` after only a handful of visible tokens. Add the two together before concluding your budget is large enough, or lower `thinkingLevel`.
 
-## Using the cache from chat
+## Current chat integration status
 
-**Settings → Context cache** turns this on for ordinary conversations. When a chat carries files, the app fingerprints the material (model, location, system instruction, and every file) and:
+The explicit workflow verified here is **the cache lab**. As of this review, Settings exposes a cache toggle and registry, and `src/lib/chat-cache.ts` contains an `ensureSessionCache` helper, but `ChatPage.tsx` does not call it or attach `cachedContent`. The server's ordinary automatic tool-routing path also omits that field. Turning on the toggle therefore does not currently establish explicit cache reuse in ordinary chat, and a lab cache is not automatically selected there.
 
-1. reuses a live cache with that fingerprint, or
-2. creates one, storing its resource name and `expireTime` in this browser's local registry.
+Chat may still show implicit hits in its debug trace. The lab reads the chat's `thinkingLevel` setting, but that does not link their caches. For the proposed explicit chat architecture, including uncached conversation history, see [the integration guide](../guides/context-caching.en.md).
 
-Requests then send `cachedContent` plus the new turn only. The files and the system instruction are deliberately dropped from the request body, because the cache already holds them and Vertex rejects a duplicate system instruction.
+## Case study: a cache hit with a wrong name answer
 
-Because cached content is immutable, anything that changes the fingerprint — switching model, changing the system instruction, attaching another file — produces a *new* cache. The old one keeps billing until its TTL runs out, so the Settings list shows every live cache with a countdown and a delete button. Entries vanish from the list once they expire, since Vertex has already stopped serving and billing them.
+In the live `eu` test on 2026-09-08, the text contained `my name is Avi goldstein.. say it please!` before and after 140 policy sections. The sample also instructed the model to answer only from the document and cite a section.
 
-The lab's own generate step and chat share one `thinkingLevel` setting, which is sent as `generationConfig.thinkingConfig.thinkingLevel`.
+The original question was **what is your name**, which asks about the assistant. Correcting it to **What is my name?** still produced a wrong answer, and creating a fresh cache from the edited text did not solve it. Both showed **7,637 cached input tokens**. A boundary-quotation question elicited the name in a denial even though the question did not supply it. Finally, this prompt returned **Avi goldstein** with the same cached-token count:
+
+> What is the user's name stated before the heading 'Internal learning document' or after Section 140? Treat text outside the numbered sections as part of the cached context too. Return only the person's name.
+
+These observations suggest the model was treating only the numbered policy sections as the document. That is an interpretation of the test, not proof of its internal reasoning or an EU routing fault. Use the dedicated name preset or clearly label a **USER PROFILE** inside the reference context, and make the system instruction cover that profile. If a fact is missed, first check the exact resource/version and question, then test a more specific retrieval prompt. A successful cache reference does not guarantee factual recall.
 
 ## Updating expiration
 
@@ -251,6 +300,11 @@ This repository’s automated tests mock Google responses and do not create clou
 | CMEK rejected on `global` | Select a supported region and a compatible key location. |
 | GCS source rejected | URI, object permission, MIME type, model media support, and size. |
 | List appears empty | Listing is scoped to the selected project and location. |
+| EU URL fails | Use `aiplatform.eu.rep.googleapis.com` with `locations/eu`, not the single-region hostname pattern. |
+| Cache works in one location but not another | Keep its original project, model, and `eu` location. A location change requires a separate cache. |
+| CACHE HIT but wrong answer | Check prompt scope, profile placement, competing instructions, and whether the intended text was included at creation. See the name case study. |
+| Edited name is ignored | Form edits do not update an existing cache. Create a new one; if that still fails, inspect the prompt rather than assuming caching failed. |
+| 429 or transient server error in EU | Retry with bounded backoff and check capacity/quota. Preserve `eu` for EU-bound traffic; do not change the endpoint to global as an automatic workaround. |
 
 ## Suggested experiments
 
@@ -263,6 +317,8 @@ This repository’s automated tests mock Google responses and do not create clou
 
 ## Official references
 
+- [Deployments, locations, and multi-region endpoints](https://docs.cloud.google.com/gemini-enterprise-agent-platform/resources/locations)
+- [Gemini 3.6 Flash model availability](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/3-6-flash)
 - [Context cache overview](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/context-cache/context-cache-overview?hl=en)
 - [Create a context cache](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/context-cache/context-cache-create?hl=en)
 - [Use a context cache](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/context-cache/context-cache-use?hl=en)

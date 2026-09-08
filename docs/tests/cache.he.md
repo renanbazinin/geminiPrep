@@ -1,6 +1,16 @@
 # מעבדת Context Cache של Vertex AI — מדריך בעברית
 
-> המדריך נבדק מול התיעוד הרשמי של Google Cloud בתאריך 14.08.2026. תמיכת מודלים, מגבלות ותמחור עשויים להשתנות; לפני שימוש בייצור יש לבדוק את המקורות הרשמיים המקושרים בסוף.
+> המדריך נבדק מול הקוד והתיעוד הרשמי של Google Cloud בתאריך 08.09.2026. הוא כולל בדיקת מטמון חיה עם Gemini 3.6 Flash במיקום `eu`. תמיכת מודלים, מגבלות ותמחור עשויים להשתנות; בדוק את המקורות המקושרים לפני שימוש בייצור.
+
+## בדיקה מהירה: זכור את השם שלי
+
+1. פתח את `/tests/cache` והזן את שמך תחת **זכור את השם שלי**.
+2. לחץ על **הכנת בדיקת השם**. הפעולה ממלאת את הטקסט הניתן לעריכה בפרופיל שלך ובטקסט רקע לעמידה במינימום הטוקנים, מכינה את השאלה **מה השם שלי?** ומגדירה פקיעה אחרי חמש דקות. ההכנה אינה מבצעת קריאות לענן.
+3. בחר **EU multi-region · eu** ואת המודל `gemini-3.6-flash`, בדוק את הפרויקט ולחץ על **יצירת מטמון**.
+4. תחת **שימוש במטמון**, לחץ על **יצירה עם המטמון**. הבקשה החדשה כוללת את השאלה ואת ההפניה למטמון; היא אינה שולחת שוב את שמך או את טקסט הרקע.
+5. בדוק את התשובה ואת **הוכחת פגיעה במטמון**: ערך חיובי של `cachedContentTokenCount` מאשר שימוש בקלט שמור. אפשר לערוך את השאלה ולשלוח שוב עם אותו מטמון.
+
+הבדיקה מתבצעת במעבדת המטמון. הצ׳אט הרגיל אינו בוחר במטמון הזה אוטומטית. כדי לשנות את השם השמור, הכן וצור מטמון חדש; מטמונים קיימים נשארים ברשימה עד למחיקה או לפקיעה. היצירה, האחסון ויצירת התשובה כרוכים בחיוב.
 
 ## מה לומדים במעבדה
 
@@ -30,15 +40,15 @@
 
 פגיעה משתמעות אינה תעלומה. Vertex מדווח עליה ב־`usageMetadata.cachedContentTokenCount` בבקשה מאוחרת שמתחילה בקידומת גדולה זהה שנשלחה לאחרונה. השדה חסר או `0` כשלא הייתה פגיעה.
 
-פעולת **לראות מטמון משתמע** במעבדה שולחת ארבע קריאות `generateContent`: המסמך הגדול הוא `systemInstruction`, שתי השאלות מתחלפות, ואין משאב `cachedContent`. השוו את אובייקטי השימוש. הקריאה הראשונה לרוב כותבת את הקידומת; הבאות יכולות להציג פגיעה. ב־Gemini 3 לעיתים צריך קריאה שלישית.
+פעולת **לראות מטמון משתמע** במעבדה שולחת ארבע קריאות `generateContent`: המסמך הגדול הוא `systemInstruction`, שתי השאלות מתחלפות, ואין משאב `cachedContent`. השווה את נתוני השימוש. קריאות מאוחרות יכולות להציג פגיעה, אך אין מספר קריאה שמבטיח אותה.
 
-בצ'אט פתחו **Debug trace** בתשובת העוזר. בשורת הסיכום יופיע `implicit · N` בפגיעה, או `no cache hit` כשהשדה חסר. זה פספוס, לא "המטמון לא התבקש" — מטמון משתמע תמיד מועמד במודלים נתמכים.
+בצ׳אט פתח **Debug trace** בתשובת העוזר. בשורת הסיכום יופיע `implicit · N` בפגיעה, או `no cache hit` כשהשדה חסר. מצב זה מדווח שלא נצפתה פגיעה; הוא אינו מוכיח כשלעצמו אם מדיניות הפרויקט מאפשרת מטמון משתמע.
 
-פספוס אחרי קידומת גדולה משותפת הוא תקין. מטמון משתמע הוא best-effort. שלחו את התור הבא מיד, השאירו את המסמך המשותף בהתחלה, ושמרו על מינימום 4,096 טוקנים של Gemini 3.
+פספוס אחרי קידומת גדולה משותפת הוא תקין. שמור את המסמך בהתחלה ושלח בקשות קרובות בזמן עם אותו מודל ומיקום. בסקירה הנוכחית סף המטמון המשתמע הוא 6,144 טוקנים עבור Gemini 3 Flash Preview,‏ 3.1 Pro Preview,‏ 3.7 Flash ו־3.8 Flash; הסף הכללי של Gemini 3 הוא 4,096. בדוק את המודל הנבחר במקום להניח שסף המטמון המפורש חל גם כאן. מדיניות הפרויקט יכולה להשבית מטמון משתמע. [מקור: סקירת המטמון](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/context-cache/context-cache-overview).
 
 ## רלוונטיות לסדרת Gemini 3
 
-בורר המודלים מבוסס על טבלת התמיכה הרשמית במטמון מפורש. במועד בדיקת המדריך הרשימה כוללת:
+בורר המטמון המפורש של המאגר כולל כיום את המודלים הבאים. זהו הקטלוג המוגדר באפליקציה, ולא רשימה מלאה של כל המודלים ש־Google תומכת בהם כיום:
 
 - `gemini-3.6-flash`
 - `gemini-3.5-flash-lite`
@@ -68,25 +78,61 @@
 
 ## מבנה המשאב ונקודות הקצה
 
-שם האוסף:
+**ב־EU multi-region משתמשים ב־`eu` בנתיב המשאב וב־`aiplatform.eu.rep.googleapis.com` כשם המארח.** אל תיצור את הכתובת `eu-aiplatform.googleapis.com` באמצעות התבנית של אזור יחיד. הקוד כבר מטפל בכך ב־`server/region-probe.ts`, בפונקציה `vertexHost()`. [מקור: נקודות קצה מרובות אזורים](https://docs.cloud.google.com/gemini-enterprise-agent-platform/resources/locations#multi-region_endpoints).
+
+| מיקום | שם מארח | מיקום בנתיב |
+| --- | --- | --- |
+| EU multi-region | `aiplatform.eu.rep.googleapis.com` | `locations/eu` |
+| US multi-region | `aiplatform.us.rep.googleapis.com` | `locations/us` |
+| אזור יחיד, לדוגמה הולנד | `europe-west4-aiplatform.googleapis.com` | `locations/europe-west4` |
+| גלובלי | `aiplatform.googleapis.com` | `locations/global` |
+
+הכתובת המלאה ליצירה ולהצגת רשימה ב־EU:
 
 ```text
-projects/{project}/locations/{location}/cachedContents
+https://aiplatform.eu.rep.googleapis.com/v1/projects/PROJECT_ID/locations/eu/cachedContents
 ```
 
-כתובת אזורית:
+הכתובת ליצירת תשובה עם מטמון ב־EU:
 
 ```text
-https://{location}-aiplatform.googleapis.com/v1/projects/{project}/locations/{location}/cachedContents
+https://aiplatform.eu.rep.googleapis.com/v1/projects/PROJECT_ID/locations/eu/publishers/google/models/gemini-3.6-flash:generateContent
 ```
 
-כתובת גלובלית:
+הערך בשדה `cachedContent` בגוף ה־JSON הוא **שם משאב, לא URL**:
 
 ```text
-https://aiplatform.googleapis.com/v1/projects/{project}/locations/global/cachedContents
+projects/PROJECT_NUMBER/locations/eu/cachedContents/CACHE_ID
 ```
 
-בשימוש במטמון, בקשת `:generateContent` של המודל מכילה את שם המשאב שהוחזר בשדה `cachedContent`.
+העתק את `name` שהוחזר בדיוק. Google עשויה להחזיר מספר פרויקט גם אם ביצירה השתמשת במזהה טקסטואלי; שניהם יכולים לזהות את אותו פרויקט. אל תחליף את שם המשאב בשם התצוגה ואל תבנה אותו מחדש. השתמש באותו פרויקט, באותו מיקום `eu` ובאותו מודל ששימשו ביצירה. [מקור: שימוש במטמון](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/context-cache/context-cache-use).
+
+בכל הפעולות הבאות נדרשים HTTPS והכותרת `Authorization: Bearer ACCESS_TOKEN`. לגופי JSON ב־POST וב־PATCH הוסף `Content-Type: application/json`. השג את האסימון בשרת דרך ADC; אל תזין אותו בממשק הדפדפן.
+
+| פעולה | מתודה | הנתיב אחרי `https://aiplatform.eu.rep.googleapis.com/v1/` |
+| --- | --- | --- |
+| יצירה | POST | `projects/PROJECT_ID/locations/eu/cachedContents` |
+| רשימה | GET | `projects/PROJECT_ID/locations/eu/cachedContents?pageSize=100` |
+| מטא־דאטה | GET | `RETURNED_CACHE_NAME` |
+| הארכת פקיעה | PATCH | `RETURNED_CACHE_NAME?updateMask=ttl` עם `{"ttl":"300s"}` |
+| יצירת תשובה | POST | `projects/PROJECT_ID/locations/eu/publishers/google/models/MODEL_ID:generateContent` |
+| מחיקה | DELETE | `RETURNED_CACHE_NAME` |
+
+המציין `RETURNED_CACHE_NAME` כבר כולל `projects/.../locations/eu/cachedContents/...`; אל תוסיף קידומת פרויקט נוספת. הזרמת תשובה משתמשת באותו נתיב מודל עם הסיומת `:streamGenerateContent?alt=sse`. רשימה עשויה להחזיר `nextPageToken`; כדי לקבל את כל המשאבים יש לעבור בין העמודים. המעבדה הנוכחית מביאה רק את העמוד הראשון, עד 100 משאבים.
+
+## תהליך מלא ב־EU multi-region
+
+1. השלם את דרישות ה־ADC והפרויקט שלמעלה. `GEMINI_API_KEY` מיועד ל־Developer API ואינו מאמת את מעבדת Vertex הזאת.
+2. בחר **EU multi-region · eu** בעמוד המטמון. להגדרת ברירת מחדל אחרי אתחול השרת, הוסף `VERTEX_CACHE_DEFAULT_REGION=eu` לקובץ `.env`. אם אתה מגדיר `VERTEX_PROBE_REGIONS`, כלול בו `eu`, כי בורר המטמון משתמש באותו קטלוג. הגדרת המיקום הנפרדת בצ׳אט אינה משנה מטמון קיים.
+3. בחר מודל שתומך גם במטמון מפורש וגם ב־`eu`. בבדיקה הזאת אומת `gemini-3.6-flash`; עמוד המודל הרשמי מתעד זמינות ב־EU multi-region. הצלחה בבדיקת Regions לבדה בודקת יצירת תשובה, ולא יצירת מטמון. [מקור: Gemini 3.6 Flash](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/3-6-flash).
+4. הכן את כל החומר הקבוע **לפני היצירה**: הוראות, פרופיל, מסמכים וקבצים. שים הוראות ב־**הוראת מערכת** ועובדות תחת כותרות ברורות ב־**טקסט למטמון**. דוגמת השם מוסיפה טקסט רקע כדי לאפשר ניסוי קטן; מילוי מלאכותי אינו אסטרטגיית חיסכון לייצור. באפליקציה השתמש בחומר שבאמת נדרש שוב ושוב.
+5. בחר **TTL** ו־`300` שניות לניסוי קצר. בדוק את **תצוגה מקדימה של שדות הבקשה** ולחץ על **יצירת מטמון**. שמור את `name`, את `model`, את `expireTime` ואת ספירת הטוקנים שהוחזרו. התצוגה המקדימה מקצרת טקסט לצורך הצגה בלבד; השרת שולח את התוכן המלא. קריאת המטא־דאטה אינה מחזירה את הגוף המקורי, משום ש־`contents` ו־`systemInstruction` הם שדות קלט בלבד. שמור את המקור בנפרד אם תצטרך לבקר או ליצור מחדש את המטמון. [מקור: משאב REST](https://docs.cloud.google.com/gemini-enterprise-agent-platform/reference/rest/v1/projects.locations.cachedContents).
+6. תחת **שימוש במטמון**, שאל **מה השם שלי?** ולחץ על **יצירה עם המטמון**. אל תכניס את התשובה לשאלה. המעבדה שולחת את ההפניה למטמון ואת השאלה הזאת; היא אינה שולחת שאלות ותשובות קודמות מהמעבדה. בשילוב של שיחה, עליך לשלוח במפורש את היסטוריית השיחה הנחוצה שאינה במטמון.
+7. בדוק בנפרד שני דברים: ערך חיובי של `cachedContentTokenCount`, ותשובה נכונה לפי העובדות. שמור את השאלה המדויקת ואת שם המטמון בעת השוואת ריצות. הפלט והחשיבה עשויים להשתנות גם עם אותו מטמון.
+8. לשאלה נוספת, השאר את אותה הפניה ושנה את הפרומפט. לתוכן או להוראות אחרים, לחץ שוב על **יצירת מטמון** אחרי העריכה. שינוי הטופס, רענון המטא־דאטה ועדכון הפקיעה אינם משנים את התוכן השמור במטמון הקיים.
+9. הארך את ה־TTL **לפני** הפקיעה אם נדרש. מחק את המטמון בסיום או המתן לפקיעתו. מטמונים שהוחלפו ממשיכים להיות מחויבים עד למחיקה או לפקיעה; יצירת חדש אינה מוחקת את קודמו.
+
+`eu` הוא מיקום לוגי אחד של multi-region, ולא הוראה לשלוח בקשות לכל אזורי `europe-*`. ניתוב EU מגביל את עיבוד ה־ML של השירות לגבולות האיחוד כפי ש־Google מתעדת. אין פירוש הדבר שאפשר להשתמש באותו מטמון דרך `europe-west4`, דרך `global` או דרך `us`, או שהדפדפן, לוגי השרת, דלי המקור וכל שירות אחר מקבלים אוטומטית את אותה הגבלת מיקום. לונדון וציריך נמצאות באירופה אך מחוץ לאיחוד. בתהליך שנדרש להישאר באיחוד, שמור על `eu` ואל תעבור אוטומטית ל־`global` בעת תקלה. [מקור: מיקומים](https://docs.cloud.google.com/gemini-enterprise-agent-platform/resources/locations).
 
 ## שדות בקשת היצירה
 
@@ -105,20 +151,20 @@ https://aiplatform.googleapis.com/v1/projects/{project}/locations/global/cachedC
 
 `ttl` ו־`expireTime` הם union: שולחים אחד מהם בלבד. אם לא נשלח זמן פקיעה, ברירת המחדל המתועדת היא 60 דקות. המינימום הוא דקה אחת, ולא מתועד ערך מקסימלי.
 
-דוגמה עם טקסט מוטמע:
+גוף יצירה ב־EU (החלף את טקסט הדוגמה בחומר המלא שעומד במינימום הטוקנים; ה־JSON המקוצר הזה לבדו קצר מדי):
 
 ```json
 {
-  "model": "projects/PROJECT/locations/global/publishers/google/models/gemini-3.6-flash",
-  "displayName": "policy-learning-cache",
+  "model": "projects/PROJECT_ID/locations/eu/publishers/google/models/gemini-3.6-flash",
+  "displayName": "eu-profile-test",
   "systemInstruction": {
-    "parts": [{ "text": "ענה רק לפי המדיניות שבמטמון." }]
+    "parts": [{ "text": "ענה לפי כל ההקשר השמור, כולל פרופיל המשתמש וסעיפי הרקע. כשנשאלת לשם המשתמש, החזר את השם מהפרופיל." }]
   },
   "contents": [{
     "role": "user",
-    "parts": [{ "text": "מסמך משותף ארוך מספיק…" }]
+    "parts": [{ "text": "USER PROFILE\nName: Avi goldstein\n\nREFERENCE MATERIAL\nהחלף שורה זו בחומר הרקע המלא שלך." }]
   }],
-  "ttl": "3600s"
+  "ttl": "300s"
 }
 ```
 
@@ -126,7 +172,7 @@ https://aiplatform.googleapis.com/v1/projects/{project}/locations/global/cachedC
 
 ```json
 {
-  "model": "projects/PROJECT/locations/us-central1/publishers/google/models/gemini-3.6-flash",
+  "model": "projects/PROJECT_ID/locations/eu/publishers/google/models/gemini-3.6-flash",
   "contents": [{
     "role": "user",
     "parts": [
@@ -145,7 +191,7 @@ https://aiplatform.googleapis.com/v1/projects/{project}/locations/global/cachedC
       }
     ]
   }],
-  "expireTime": "2026-08-14T15:30:00Z"
+  "ttl": "300s"
 }
 ```
 
@@ -155,7 +201,7 @@ https://aiplatform.googleapis.com/v1/projects/{project}/locations/global/cachedC
 
 - מטמון מפורש של Gemini 3 דורש כיום לפחות 4,096 טוקני קלט.
 - תוכן מוטמע מסוג blob או text מוגבל ל־10 MB.
-- קידוד base64 מנפח את הקובץ בכשליש, והכול חייב להיכנס לבקשה אחת; המעבדה מגבילה ל־15 MB לכל קריאת יצירה.
+- המעבדה מאפשרת עד 15 MB של קבצים מוטמעים לאחר פענוח, אך המגבלה המקומית אינה מבטלת את מגבלת 10 MB של Google לתוכן מטמון. base64 מוסיף כשליש לגודל התעבורה; השתמש ב־GCS כאשר התוכן גדול מדי להטמעה.
 - לתוכן גדול יותר יש להשתמש ב־Cloud Storage.
 - פורמטים ומגבלות מדיה תלויים גם במודל הנבחר.
 - המטמון שייך לפרויקט ולמיקום יחידים, ויש להשתמש בו מול נקודת קצה תואמת באותו מיקום.
@@ -166,10 +212,10 @@ https://aiplatform.googleapis.com/v1/projects/{project}/locations/global/cachedC
 
 ```json
 {
-  "cachedContent": "projects/PROJECT/locations/global/cachedContents/CACHE_ID",
+  "cachedContent": "projects/PROJECT_NUMBER/locations/eu/cachedContents/CACHE_ID",
   "contents": [{
     "role": "user",
-    "parts": [{ "text": "באיזו תדירות יש לבדוק עלויות?" }]
+    "parts": [{ "text": "מה השם שלי?" }]
   }]
 }
 ```
@@ -180,24 +226,27 @@ https://aiplatform.googleapis.com/v1/projects/{project}/locations/global/cachedC
 usageMetadata.cachedContentTokenCount
 ```
 
-ערך חיובי הוא הראיה של הספק לכך שנעשה שימוש בקלט מהמטמון. זמן תגובה קצר אינו הוכחה: רשת, קיבולת, אורך הפלט ותשתית חמה משפיעים גם הם על המדידה.
+ערך חיובי מוכיח שימוש בקלט מהמטמון, ולא נכונות של התשובה. זמן תגובה קצר אינו הוכחה: רשת, קיבולת, אורך הפלט ותשתית חמה משפיעים גם הם על המדידה. אל תשלח שוב בבקשת יצירת התשובה `systemInstruction`, `tools` או `toolConfig` שכבר נשמרו במטמון. [מקור: מגבלות שימוש](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/context-cache/context-cache-use#context_cache_use_restrictions).
 
 כדאי להשוות גם את `promptTokenCount`, את `candidatesTokenCount` ואת `totalTokenCount`.
 
 יש לשים לב גם ל־`thoughtsTokenCount`: טוקני החשיבה של Gemini 3 נגרעים מ־`maxOutputTokens`, אך אינם נכללים ב־`candidatesTokenCount`. לכן תשובה יכולה להיעצר עם `MAX_TOKENS` אחרי מעט מאוד טוקנים גלויים. יש לחבר את שני המספרים לפני שמסיקים שהתקציב מספיק, או להנמיך את `thinkingLevel`.
 
-## שימוש במטמון מתוך הצ׳אט
+## מצב השילוב בצ׳אט כיום
 
-במסך **הגדרות → מטמון הקשר** אפשר להפעיל את היכולת עבור שיחות רגילות. כאשר שיחה כוללת קבצים, האפליקציה מחשבת טביעת אצבע של החומר (מודל, מיקום, הוראת מערכת וכל הקבצים) ואז:
+התהליך המפורש שאומת כאן הוא **מעבדת המטמון**. בעת הבדיקה, מסך ההגדרות מציג מתג ורישום מטמונים, וב־`src/lib/chat-cache.ts` קיימת הפונקציה `ensureSessionCache`, אך `ChatPage.tsx` אינו קורא לה ואינו מצרף `cachedContent`. גם מסלול ניתוב הכלים האוטומטי הרגיל בשרת משמיט את השדה. לכן הפעלת המתג אינה יוצרת כיום שימוש מפורש במטמון בצ׳אט הרגיל, ומטמון מהמעבדה אינו נבחר שם אוטומטית.
 
-1. משתמשת מחדש במטמון חי בעל אותה טביעת אצבע, או
-2. יוצרת מטמון חדש ושומרת את שם המשאב ואת `expireTime` ברישום המקומי של הדפדפן.
+הצ׳אט עדיין עשוי להציג פגיעות משתמעות בתיעוד הניפוי. המעבדה משתמשת בהגדרת `thinkingLevel` של הצ׳אט, אך אין בכך קישור בין המטמונים. לתכנון השילוב המפורש בצ׳אט, כולל היסטוריה שאינה במטמון, ראה את [מדריך השילוב](../guides/context-caching.he.md).
 
-מכאן והלאה הבקשות שולחות רק את `cachedContent` ואת התור החדש. הקבצים והוראת המערכת מושמטים מגוף הבקשה במכוון, מפני שהמטמון כבר מכיל אותם ו־Vertex דוחה הוראת מערכת כפולה.
+## מקרה לדוגמה: פגיעה במטמון ותשובת שם שגויה
 
-מכיוון שתוכן שמור אינו ניתן לשינוי, כל דבר שמשנה את טביעת האצבע — החלפת מודל, שינוי הוראת המערכת או הוספת קובץ — יוצר מטמון **חדש**. הישן ממשיך להיות מחויב עד תום ה־TTL שלו, ולכן רשימת ההגדרות מציגה כל מטמון חי עם ספירה לאחור וכפתור מחיקה. רשומות נעלמות מהרשימה עם הפקיעה, מכיוון ש־Vertex כבר הפסיק להגיש ולחייב עליהן.
+בניסוי החי ב־`eu` בתאריך 08.09.2026 הופיע הטקסט `my name is Avi goldstein.. say it please!` לפני ואחרי 140 סעיפי מדיניות. הדוגמה גם הורתה למודל לענות רק מתוך המסמך ולציין מספר סעיף.
 
-שלב היצירה במעבדה והצ׳אט חולקים הגדרת `thinkingLevel` אחת, שנשלחת כ־`generationConfig.thinkingConfig.thinkingLevel`.
+השאלה המקורית הייתה **what is your name**, ששואלת לשם העוזר. גם תיקון ל־**What is my name?** החזיר תשובה שגויה, ויצירת מטמון חדש מהטקסט הערוך לא פתרה זאת. בשני המקרים דווחו **7,637 טוקנים מהמטמון**. בשאלת ציטוט של תחילת הטקסט וסופו המודל הזכיר את השם בתוך הכחשה, אף שהשאלה לא סיפקה אותו. לבסוף הפרומפט הבא החזיר **Avi goldstein**, עם אותה ספירת טוקנים מהמטמון:
+
+> What is the user's name stated before the heading 'Internal learning document' or after Section 140? Treat text outside the numbered sections as part of the cached context too. Return only the person's name.
+
+התצפיות מצביעות על אפשרות שהמודל התייחס רק לסעיפי המדיניות הממוספרים כאל המסמך. זהו פירוש של הניסוי, ולא הוכחה לחשיבה הפנימית שלו או לתקלת ניתוב EU. השתמש בדוגמת השם הייעודית, או סמן **USER PROFILE** בתוך ההקשר והגדר הוראת מערכת שחלה גם עליו. כשעובדה אינה מאוחזרת, בדוק תחילה את המשאב, את הגרסה ואת השאלה המדויקים, ואז נסה שאלת אחזור ממוקדת. שימוש מוצלח במטמון אינו מבטיח שליפה נכונה של עובדות.
 
 ## עדכון זמן הפקיעה
 
@@ -244,6 +293,11 @@ usageMetadata.cachedContentTokenCount
 | CMEK נדחה ב־`global` | בחירת אזור נתמך ומיקום מפתח תואם. |
 | מקור GCS נדחה | URI, הרשאת אובייקט, MIME, תמיכת המדיה של המודל וגודל הקובץ. |
 | הרשימה ריקה | הרשימה מוגבלת לפרויקט ולמיקום שנבחרו. |
+| כתובת EU נכשלת | השתמש ב־`aiplatform.eu.rep.googleapis.com` וב־`locations/eu`, ולא בתבנית שם המארח של אזור יחיד. |
+| מטמון פועל במיקום אחד ולא באחר | שמור על הפרויקט, המודל והמיקום `eu` ששימשו ביצירה. שינוי מיקום מחייב מטמון נפרד. |
+| CACHE HIT עם תשובה שגויה | בדוק את היקף השאלה, מיקום הפרופיל, הוראות מתחרות ומה נכלל בזמן יצירת המטמון. ראה את ניסוי השם. |
+| השם שנערך אינו מופיע | עריכת הטופס אינה מעדכנת מטמון קיים. צור חדש; אם גם אז התשובה שגויה, בדוק את הפרומפט ולא רק את המטמון. |
+| 429 או שגיאת שרת זמנית ב־EU | נסה שוב בהשהיה הולכת וגדלה עם מספר ניסיונות מוגבל ובדוק קיבולת ומכסה. בתעבורה שנדרשת להישאר באיחוד, שמור על `eu` ואל תעבור אוטומטית לגלובלי. |
 
 ## ניסויים מומלצים
 
@@ -256,6 +310,8 @@ usageMetadata.cachedContentTokenCount
 
 ## מקורות רשמיים
 
+- [מיקומים ונקודות קצה מרובות אזורים](https://docs.cloud.google.com/gemini-enterprise-agent-platform/resources/locations)
+- [זמינות Gemini 3.6 Flash](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/3-6-flash)
 - [סקירת Context cache](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/context-cache/context-cache-overview?hl=en)
 - [יצירת Context cache](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/context-cache/context-cache-create?hl=en)
 - [שימוש ב־Context cache](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/context-cache/context-cache-use?hl=en)

@@ -57,6 +57,12 @@ its purpose, setup, interpretation, limitations, and the concepts learned while 
 The cache lab performs billable calls only when you press its action buttons; automated tests
 mock Google responses and never create cloud cache resources.
 
+For the EU multi-region endpoint, complete cache lifecycle, and name-retrieval troubleshooting,
+read the cache lab guide in [English](docs/tests/cache.en.md) or [Hebrew](docs/tests/cache.he.md).
+The proposed chatbot integration is documented separately in
+[English](docs/guides/context-caching.en.md) and [Hebrew](docs/guides/context-caching.he.md);
+those guides distinguish the working lab from the currently unwired automatic chat-cache helper.
+
 ## Validation
 
 ```powershell
