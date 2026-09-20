@@ -17,3 +17,4 @@ service-account*.json
 *.pfx
 
 coverage/
+.jira-demo/

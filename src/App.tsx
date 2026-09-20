@@ -8,6 +8,7 @@ import { CachePage } from "./pages/CachePage";
 import { RegionsPage } from "./pages/RegionsPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { TestsPage } from "./pages/TestsPage";
+import { JiraPage } from "./pages/JiraPage";
 
 export function App() {
   return (
@@ -19,6 +20,7 @@ export function App() {
               <Route element={<AppShell />}>
                 <Route index element={<ChatPage />} />
                 <Route path="settings" element={<SettingsPage />} />
+                <Route path="jira" element={<JiraPage />} />
                 <Route path="tests" element={<TestsPage />} />
                 <Route path="tests/regions" element={<RegionsPage />} />
                 <Route path="tests/cache" element={<CachePage />} />
