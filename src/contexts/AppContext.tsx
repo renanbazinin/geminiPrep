@@ -13,6 +13,8 @@ import {
   conversationTitle,
   createConversation,
   loadConversations,
+  loadActiveConversationId,
+  saveActiveConversationId,
   loadSettings,
   saveConversations,
   saveSettings,
@@ -22,6 +24,7 @@ import { deleteAttachmentPayloads } from "../lib/attachments";
 import { deleteGeneratedImages } from "../lib/generated-images";
 
 type AppContextValue = {
+  storageError: string | null;
   conversations: Conversation[];
   activeConversationId: string;
   activeConversation: Conversation;
@@ -34,6 +37,7 @@ type AppContextValue = {
   appendMessages(conversationId: string, messages: ChatMessage[]): void;
   updateMessage(conversationId: string, messageId: string, patch: Partial<ChatMessage>): void;
   removeMessage(conversationId: string, messageId: string): void;
+  clearInteractionReferences(conversationId: string): void;
   updateSettings(patch: Partial<AppSettings>): void;
   resetSettings(config?: PublicConfig): void;
   reconcileSettings(config: PublicConfig): void;
@@ -43,11 +47,23 @@ const AppContext = createContext<AppContextValue | null>(null);
 
 export function AppProvider({ children }: { children: ReactNode }) {
   const [conversations, setConversations] = useState<Conversation[]>(loadConversations);
-  const [activeConversationId, setActiveConversationIdState] = useState(() => conversations[0]!.id);
+  const [activeConversationId, setActiveConversationIdState] = useState(() => loadActiveConversationId(conversations));
   const [settings, setSettings] = useState<AppSettings>(loadSettings);
 
-  useEffect(() => saveConversations(conversations), [conversations]);
-  useEffect(() => saveSettings(settings), [settings]);
+  const [conversationStorageError, setConversationStorageError] = useState<string | null>(null);
+  const [settingsStorageError, setSettingsStorageError] = useState<string | null>(null);
+  useEffect(() => {
+    try { saveConversations(conversations); setConversationStorageError(null); }
+    catch { setConversationStorageError("Browser storage is full or unavailable. This chat is still open, but new messages may not survive a reload. Export important content before closing."); }
+  }, [conversations]);
+  useEffect(() => {
+    try { saveSettings(settings); setSettingsStorageError(null); }
+    catch { setSettingsStorageError("Settings could not be saved in this browser. Changes apply now but may not survive a reload."); }
+  }, [settings]);
+  useEffect(() => {
+    try { saveActiveConversationId(activeConversationId); }
+    catch { /* The conversation/settings warnings already explain unavailable storage. */ }
+  }, [activeConversationId]);
 
   const mutateConversation = useCallback(
     (id: string, updater: (conversation: Conversation) => Conversation) => {
@@ -139,6 +155,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setSettings((current) => ({ ...current, ...patch }));
   }, []);
 
+  const clearInteractionReferences = useCallback((conversationId: string) => {
+    mutateConversation(conversationId, (conversation) => ({ ...conversation,
+      messages: conversation.messages.map((message) => ({ ...message, interaction: undefined })),
+    }));
+  }, [mutateConversation]);
+
   const resetSettings = useCallback((config?: PublicConfig) => {
     setSettings(config ? settingsForConfig(FALLBACK_SETTINGS, config) : FALLBACK_SETTINGS);
   }, []);
@@ -150,6 +172,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const activeConversation = conversations.find((conversation) => conversation.id === activeConversationId)
     ?? conversations[0]!;
   const value = useMemo<AppContextValue>(() => ({
+    storageError: conversationStorageError ?? settingsStorageError,
     conversations,
     activeConversationId: activeConversation.id,
     activeConversation,
@@ -162,13 +185,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
     appendMessages,
     updateMessage,
     removeMessage,
+    clearInteractionReferences,
     updateSettings,
     resetSettings,
     reconcileSettings,
   }), [
+    conversationStorageError,
+    settingsStorageError,
     activeConversation,
     appendMessages,
     clearConversations,
+    clearInteractionReferences,
     conversations,
     deleteConversation,
     newConversation,

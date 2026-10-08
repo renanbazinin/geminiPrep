@@ -23,6 +23,36 @@ function eventStream(events: string[], status = 200): Response {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("chat stream debug callbacks", () => {
+  it("decodes Unicode and CRLF split across individual bytes, including an unterminated final frame", async () => {
+    const bytes = new TextEncoder().encode('event: delta\r\ndata: {"text":"שלום 🌷"}\r\n\r\nevent: done\r\ndata: {"finishReason":"STOP"}');
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(new ReadableStream({
+      start(controller) { for (const byte of bytes) controller.enqueue(new Uint8Array([byte])); controller.close(); },
+    }))));
+    const onDelta = vi.fn();
+    const onDone = vi.fn();
+    await streamChat(request, { onDelta, onDone }, new AbortController().signal);
+    expect(onDelta).toHaveBeenCalledWith("שלום 🌷");
+    expect(onDone).toHaveBeenCalledExactlyOnceWith({ finishReason: "STOP" });
+  });
+
+  it("stops reading at completion and cancels the reader without processing trailing garbage", async () => {
+    const cancel = vi.fn();
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(new ReadableStream({
+      start(controller) { controller.enqueue(new TextEncoder().encode('event: done\ndata: {}\n\nevent: error\ndata: not-json\n\n')); },
+      cancel,
+    }))));
+    const onDone = vi.fn();
+    await streamChat(request, { onDelta() {}, onDone }, new AbortController().signal);
+    expect(onDone).toHaveBeenCalledOnce();
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+
+  it("rejects truncated streams and does not manufacture completion", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => eventStream(['event: delta\ndata: {"text":"Partial"}\n\n'])));
+    const onDone = vi.fn();
+    await expect(streamChat(request, { onDelta() {}, onDone }, new AbortController().signal)).rejects.toThrow("before the model completed");
+    expect(onDone).not.toHaveBeenCalled();
+  });
   it("reports HTTP, meta, deltas, and completion metadata", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => eventStream([
       "event: meta\ndata: {\"provider\":\"gemini\",\"model\":\"gemini-test\",\"startedAt\":\"2026-08-14T00:00:00.000Z\"}\n\n",

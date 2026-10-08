@@ -1,8 +1,19 @@
 # Gemini Prep
 
-Gemini Prep is a local, Vertex-first chat and endpoint learning lab. It combines a modern
+Gemini Prep is a local, stateful Gemini chat and endpoint learning lab. It combines a modern
 streaming chat interface with focused, documented experiments that help explain how Gemini
 behaves across Google Cloud surfaces.
+
+The main chat supports Gemini's **Interactions API** with persistent conversation references,
+streaming, built-in tools, and expanded settings. Select **Vertex AI → Interactions** for your
+Google Cloud project and ADC, or **Gemini Developer API → Interactions** for an API key.
+Existing provider selections and chats are preserved. See the
+[Interactions guide](docs/guides/interactions.en.md) for controls, migration, and limitations.
+
+Gemini 3.8 Flash is available on both providers and is the default for fresh browser settings.
+Existing model selections are preserved. If an older local environment list hides it, add
+`gemini-3.8-flash` to `VERTEX_CHAT_MODELS` (or its `VERTEX_PROBE_MODELS` fallback) and
+`GEMINI_CHAT_MODELS`, then restart the server.
 
 Every new assistant turn also keeps a collapsible local debug trace. It records the browser API
 request, the sanitized provider request, HTTP/SSE response metadata, usage, timing, event counts,
@@ -23,9 +34,11 @@ only metadata, preventing large base64 payloads from filling `localStorage`.
 Requirements:
 
 - Node.js 22+
-- A Google Cloud project with Vertex AI enabled
-- Application Default Credentials for Vertex (`gcloud auth application-default login`)
-- An optional `GEMINI_API_KEY` for the Gemini Developer API comparison mode
+- `GEMINI_API_KEY` for Gemini Developer API chat (not needed for Vertex Interactions)
+- For Vertex chat and labs: a Google Cloud project with Vertex AI enabled and
+  Application Default Credentials (`gcloud auth application-default login`)
+
+Configure the provider you plan to use; both providers are not required for main chat.
 
 Install and start both the local server and browser app:
 
@@ -39,7 +52,8 @@ Open `http://localhost:5173`. The API server runs on port 3001 and is proxied by
 ## Local data and credentials
 
 - Conversation history and settings are serialized to browser `localStorage`.
-- The server is stateless and receives conversation history with each turn.
+- Interactions on either provider keeps conversation state with Google; successful follow-ups send only new input and a stored interaction ID. Legacy Generate Content sends local history each turn. Vertex Interactions uses the global preview endpoint and scopes saved IDs to the configured project.
+- Interactions storage can be disabled in Settings. Deleting a local chat does not delete Google's stored interactions.
 - Vertex uses Application Default Credentials on the server.
 - The Gemini API key is read only from `.env` and is never returned to the browser.
 - `.env` is ignored by Git. Use `.env.example` to understand available settings.
@@ -47,7 +61,7 @@ Open `http://localhost:5173`. The API server runs on port 3001 and is proxied by
 ## Routes
 
 - `/` — streaming chat and local conversations
-- `/settings` — provider, model, region, system instruction, and generation controls
+- `/settings` — provider, model, memory/storage, tools, reasoning, structured output, image, and generation controls
 - `/jira` — DeskFlow Jira space with live tickets and chat actions; see [setup and behavior](docs/guides/jira-demo.en.md)
 - `/tests` — bilingual English/Hebrew test lab index
 - `/tests/regions` — live Vertex model-by-region availability matrix

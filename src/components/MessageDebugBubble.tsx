@@ -42,8 +42,8 @@ export function MessageDebugBubble({ debug }: { debug: ChatMessageDebug }) {
   const duration = debug.timing.clientDurationMs ?? debug.response.done?.durationMs;
   const firstToken = debug.timing.clientTimeToFirstDeltaMs ?? debug.response.done?.timeToFirstTokenMs;
   const usage = debug.response.done?.usage;
-  const totalTokens = numberFrom(usage?.totalTokenCount);
-  const cachedTokens = numberFrom(usage?.cachedContentTokenCount) ?? 0;
+  const totalTokens = numberFrom(usage?.totalTokenCount ?? usage?.total_tokens);
+  const cachedTokens = numberFrom(usage?.cachedContentTokenCount ?? usage?.total_cached_tokens) ?? 0;
   const providerBody = recordFrom(debug.request.provider?.body);
   const cachedContent = typeof providerBody?.cachedContent === "string" ? providerBody.cachedContent : null;
   const cacheHit = cachedTokens > 0;

@@ -17,6 +17,7 @@ export type RegionOption = {
 };
 
 export type RequestSnapshot = {
+  api?: "generateContent" | "interactions";
   provider: ProviderId;
   model: string;
   region?: string;
@@ -35,6 +36,9 @@ export type ChatStreamMeta = RequestSnapshot & {
 };
 
 export type ChatStreamDone = {
+  interactionProject?: string;
+  interactionId?: string;
+  interactionStatus?: string;
   finishReason?: string;
   responseId?: string;
   usage?: Record<string, unknown>;
@@ -47,6 +51,7 @@ export type ChatStreamDone = {
 };
 
 export type ChatStreamErrorData = {
+  code?: "interaction_reference_invalid";
   message: string;
   status?: number;
   finishedAt?: string;
@@ -123,6 +128,12 @@ export type ChatStreamRequestMessage = {
 };
 
 export type ChatMessage = {
+  recoveryNotice?: string;
+  sources?: Array<{ title: string; url: string }>;
+  searchSuggestions?: string[];
+  interaction?: { id: string; model: string; apiVersion: "v1" | "v1beta" | "v1beta1"; project?: string };
+  thinkingSummary?: string;
+  activity?: string;
   id: string;
   role: MessageRole;
   content: string;
@@ -145,9 +156,31 @@ export type Conversation = {
 };
 
 /** Gemini 3 reasoning depth. Thinking tokens are billed against maxOutputTokens. */
-export type ThinkingLevel = "low" | "high";
+export type ThinkingLevel = "minimal" | "low" | "medium" | "high";
+
+export type InteractionOptions = {
+  apiVersion: "v1" | "v1beta";
+  stateful: boolean;
+  store: boolean;
+  thinkingSummaries: "auto" | "none";
+  thinkingLevel: "default" | ThinkingLevel;
+  toolChoice: "auto" | "any" | "none" | "validated";
+  googleSearch: boolean;
+  urlContext: boolean;
+  codeExecution: boolean;
+  seed: number | null;
+  stopSequences: string[];
+  topP: number | null;
+  responseFormat: "text" | "json";
+  responseSchema: string;
+  imageAspectRatio: string;
+  imageSize: "512" | "1K" | "2K" | "4K";
+};
 
 export type AppSettings = {
+  vertexApi: "interactions" | "generateContent";
+  geminiApi: "interactions" | "generateContent";
+  interactions: InteractionOptions;
   version: 1;
   provider: ProviderId;
   models: Record<ProviderId, string>;
@@ -196,6 +229,10 @@ export type PublicConfig = {
 };
 
 export type ChatStreamRequest = {
+  /** Expected server project, used to prevent continuation across project changes. */
+  interactionProject?: string;
+  interactions?: InteractionOptions;
+  previousInteractionId?: string;
   provider: ProviderId;
   model: string;
   region?: string;
@@ -223,6 +260,9 @@ export type ChatStreamToolData = {
 };
 
 export type ChatStreamEvent =
+  | { event: "grounding"; data: { sources?: Array<{ title: string; url: string }>; searchSuggestions?: string } }
+  | { event: "thinking"; data: { text: string } }
+  | { event: "activity"; data: { text: string } }
   | { event: "meta"; data: ChatStreamMeta }
   | { event: "delta"; data: { text: string } }
   | { event: "image"; data: ChatStreamImageData }

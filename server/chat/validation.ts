@@ -8,6 +8,7 @@ import type {
 } from "../../shared/contracts.js";
 import type { ModelOption, RegionOption } from "../../shared/contracts.js";
 import { IMAGE_MODEL_ID, IMAGE_MODEL_REGION, isChatToolId, normalizeImageMimeType } from "../../shared/chat-tools.js";
+import { parseInteractionOptions } from "../../shared/interactions.js";
 
 const MAX_HISTORY_MESSAGES = 200;
 const MAX_TOTAL_CHARACTERS = 1_000_000;
@@ -36,6 +37,19 @@ export function validateChatRequest(
     fail("provider must be either vertex or gemini.");
   }
   const providerId: ProviderId = provider;
+  const interactions = input.interactions === undefined ? undefined : parseInteractionOptions(input.interactions);
+  let interactionProject: string | undefined;
+  if (input.interactionProject !== undefined) {
+    if (!interactions || providerId !== "vertex" || typeof input.interactionProject !== "string" || !/^[A-Za-z0-9._-]+$/.test(input.interactionProject) || input.interactionProject.length > 128) fail("Invalid interactionProject.");
+    interactionProject = input.interactionProject;
+  }
+  let previousInteractionId: string | undefined;
+  if (input.previousInteractionId !== undefined) {
+    if (!interactions?.stateful || !interactions.store) fail("previousInteractionId requires stored, stateful Interactions.");
+    if (typeof input.previousInteractionId !== "string" || !input.previousInteractionId.trim() || input.previousInteractionId.length > 4096 || /[\s\x00-\x1f]/.test(input.previousInteractionId)) fail("Invalid previousInteractionId.");
+    previousInteractionId = input.previousInteractionId;
+    if (providerId === "vertex" && !interactionProject) fail("Vertex continuation requires its original interactionProject.");
+  }
   let tool: ChatToolId | undefined;
   if (input.tool !== undefined && input.tool !== "") {
     tool = isChatToolId(input.tool) ? input.tool : fail("tool must be image or graph.");
@@ -56,7 +70,8 @@ export function validateChatRequest(
     if (!catalogs.regions.some((candidate) => candidate.id === input.region)) {
       fail(`Region ${input.region} is not configured.`);
     }
-    region = tool === "image" ? IMAGE_MODEL_REGION : input.region;
+    if (interactions && input.region !== "global") fail("Vertex Interactions supports only the global endpoint.");
+    region = interactions ? "global" : tool === "image" ? IMAGE_MODEL_REGION : input.region;
   }
 
   const temperature = Number(input.temperature);
@@ -164,6 +179,7 @@ export function validateChatRequest(
     return { role: entry.role, content: entry.content, ...(files ? { files } : {}) };
   });
   if (messages.at(-1)?.role !== "user") fail("The last message must be from the user.");
+  if (previousInteractionId && messages.some((message) => message.role !== "user")) fail("A stored interaction continuation accepts only new user input, not replayed history.");
   if (totalCharacters > MAX_TOTAL_CHARACTERS) {
     fail(`Conversation history cannot exceed ${MAX_TOTAL_CHARACTERS} characters.`);
   }
@@ -175,6 +191,9 @@ export function validateChatRequest(
   }
 
   return {
+    ...(interactions ? { interactions } : {}),
+    ...(interactionProject ? { interactionProject } : {}),
+    ...(previousInteractionId ? { previousInteractionId } : {}),
     provider: providerId,
     model,
     ...(region ? { region } : {}),

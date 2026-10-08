@@ -1,12 +1,29 @@
 import type { AppSettings, Conversation, PublicConfig } from "../../shared/contracts";
+import { DEFAULT_INTERACTIONS, parseInteractionOptions } from "../../shared/interactions";
 
 const CONVERSATIONS_KEY = "gemini-prep:conversations:v1";
 const SETTINGS_KEY = "gemini-prep:settings:v1";
+const ACTIVE_CONVERSATION_KEY = "gemini-prep:active-conversation:v1";
+
+export function loadActiveConversationId(conversations: Conversation[]): string {
+  try {
+    const saved = localStorage.getItem(ACTIVE_CONVERSATION_KEY);
+    if (conversations.some((conversation) => conversation.id === saved)) return saved!;
+  } catch { /* Browsers can deny access to local storage. */ }
+  return conversations[0]!.id;
+}
+
+export function saveActiveConversationId(id: string): void {
+  localStorage.setItem(ACTIVE_CONVERSATION_KEY, id);
+}
 
 export const FALLBACK_SETTINGS: AppSettings = {
+  vertexApi: "generateContent",
+  geminiApi: "interactions",
+  interactions: DEFAULT_INTERACTIONS,
   version: 1,
-  provider: "vertex",
-  models: { vertex: "gemini-3.7-flash", gemini: "gemini-3.7-flash" },
+  provider: "gemini",
+  models: { vertex: "gemini-3.8-flash", gemini: "gemini-3.8-flash" },
   region: "global",
   systemInstruction: "",
   temperature: 1,
@@ -67,12 +84,26 @@ export function loadSettings(): AppSettings {
         ...FALLBACK_SETTINGS,
         ...parsed,
         models: { ...FALLBACK_SETTINGS.models, ...parsed.models },
+        geminiApi: parsed.geminiApi === "generateContent" ? "generateContent" : "interactions",
+        vertexApi: parsed.vertexApi === "interactions" ? "interactions" : "generateContent",
+        interactions: restoreInteractionSettings(parsed.interactions),
       };
     }
   } catch {
     // Corrupt local data falls back to defaults.
   }
   return FALLBACK_SETTINGS;
+}
+
+function restoreInteractionSettings(value: unknown) {
+  // Preserve unfinished schema drafts across navigation/reload; sending still validates them.
+  try { return parseInteractionOptions(value ?? DEFAULT_INTERACTIONS, false); }
+  catch {
+    const saved = value && typeof value === "object" ? value as Record<string, unknown> : {};
+    // A corrupt unrelated preference must never undo the user's storage opt-out.
+    const store = saved.store !== false;
+    return { ...DEFAULT_INTERACTIONS, store, stateful: store && saved.stateful !== false };
+  }
 }
 
 export function saveSettings(settings: AppSettings): void {

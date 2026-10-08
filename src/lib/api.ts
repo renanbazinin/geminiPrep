@@ -31,6 +31,9 @@ export async function streamChat(
     onOpen?(response: { status: number; statusText: string; headers: Record<string, string> }): void;
     onMeta?(event: Extract<ChatStreamEvent, { event: "meta" }>["data"]): void;
     onDelta(text: string): void;
+    onThinking?(text: string): void;
+    onActivity?(text: string): void;
+    onGrounding?(data: Extract<ChatStreamEvent, { event: "grounding" }>["data"]): void;
     onImage?(image: ChatStreamImageData): void | Promise<void>;
     onTool?(tool: ChatStreamToolData): void | Promise<void>;
     onDone?(event: Extract<ChatStreamEvent, { event: "done" }>["data"]): void;
@@ -38,6 +41,7 @@ export async function streamChat(
   },
   signal: AbortSignal,
 ): Promise<void> {
+  signal.throwIfAborted();
   const response = await fetch("/api/chat/stream", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -60,9 +64,13 @@ export async function streamChat(
   const decoder = new TextDecoder();
   let buffer = "";
   let terminalEvent = false;
+  try {
   while (true) {
     const { value, done } = await reader.read();
-    buffer += decoder.decode(value, { stream: !done }).replace(/\r\n/g, "\n");
+    signal.throwIfAborted();
+    buffer += decoder.decode(value, { stream: !done });
+    buffer = buffer.replace(/\r\n/g, "\n");
+    if (done && buffer.trim()) buffer += "\n\n";
     let boundary = buffer.indexOf("\n\n");
     while (boundary >= 0) {
       const block = buffer.slice(0, boundary);
@@ -76,6 +84,9 @@ export async function streamChat(
         const data = JSON.parse(dataText) as Record<string, unknown>;
         if (eventName === "meta") handlers.onMeta?.(data as never);
         if (eventName === "delta" && typeof data.text === "string") handlers.onDelta(data.text);
+        if (eventName === "thinking" && typeof data.text === "string") handlers.onThinking?.(data.text);
+        if (eventName === "activity" && typeof data.text === "string") handlers.onActivity?.(data.text);
+        if (eventName === "grounding") handlers.onGrounding?.(data as Extract<ChatStreamEvent, { event: "grounding" }>["data"]);
         if (eventName === "image" && typeof data.mimeType === "string" && typeof data.data === "string") {
           const mimeType = normalizeImageMimeType(data.mimeType) ?? (data.mimeType.startsWith("image/") ? "image/png" : null);
           if (mimeType) await handlers.onImage?.({ mimeType, data: data.data });
@@ -95,6 +106,7 @@ export async function streamChat(
         if (eventName === "done") {
           terminalEvent = true;
           handlers.onDone?.(data as never);
+          return;
         }
         if (eventName === "error") {
           terminalEvent = true;
@@ -103,6 +115,7 @@ export async function streamChat(
             ...(typeof data.status === "number" ? { status: data.status } : {}),
             ...(typeof data.finishedAt === "string" ? { finishedAt: data.finishedAt } : {}),
             ...(typeof data.durationMs === "number" ? { durationMs: data.durationMs } : {}),
+            ...(data.code === "interaction_reference_invalid" ? { code: "interaction_reference_invalid" as const } : {}),
           };
           handlers.onError?.(error);
           throw new Error(error.message);
@@ -113,4 +126,8 @@ export async function streamChat(
     if (done) break;
   }
   if (!terminalEvent) throw new Error("The stream ended before the model completed its response.");
+  } finally {
+    await reader.cancel().catch(() => undefined);
+    reader.releaseLock();
+  }
 }

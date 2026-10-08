@@ -36,7 +36,7 @@ import { MarkdownMessage } from "../components/MarkdownMessage";
 import { MessageDebugBubble } from "../components/MessageDebugBubble";
 import { useApp } from "../contexts/AppContext";
 import { useConfig } from "../contexts/ConfigContext";
-import { streamChat } from "../lib/api";
+import { streamChatWithRecovery } from "../lib/interaction-recovery";
 import {
   ATTACHMENT_ACCEPT,
   MAX_ATTACHMENTS_PER_MESSAGE,
@@ -53,6 +53,8 @@ import {
   storeGeneratedImage,
 } from "../lib/generated-images";
 import { createId } from "../lib/storage";
+import { selectInteractionHistory } from "../lib/interaction-history";
+import { interactionApiVersion, usesInteractions } from "../../shared/interactions";
 
 const SUGGESTIONS = [
   "Explain how Vertex AI regional endpoints differ from the global endpoint.",
@@ -148,10 +150,12 @@ function ComposerTools({
   selected,
   onSelect,
   disabled,
+  interactionMode,
 }: {
   selected: ChatToolId | null;
   onSelect(tool: ChatToolId | null): void;
   disabled: boolean;
+  interactionMode: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement | null>(null);
@@ -171,7 +175,7 @@ function ComposerTools({
     };
   }, [open]);
   const Icon = selected === "image" ? ImageIcon : selected === "graph" ? Share2 : Wrench;
-  const title = selected === "image" ? "Generate image" : selected === "graph" ? "Generate graph" : "Tools (Auto)";
+  const title = selected === "image" ? "Generate image" : selected === "graph" ? "Generate graph" : interactionMode ? "Image and diagram tools" : "Tools (Auto)";
   return (
     <div className="composer-tools" ref={wrapRef}>
       <button
@@ -251,7 +255,7 @@ function ProviderBadge() {
       <span className={`provider-dot provider-dot-${settings.provider}`} />
       <span>{settings.provider === "vertex" ? "Vertex AI" : "Gemini API"}</span>
       <span className="provider-model">{model}</span>
-      {settings.provider === "vertex" ? <span className="provider-region">{settings.region}</span> : null}
+      {settings.provider === "vertex" ? <span className="provider-region">{usesInteractions(settings) ? "global" : settings.region}</span> : null}
       {!config?.providers[settings.provider].ready ? <span className="provider-warning">Setup needed</span> : null}
       <Settings2 size={14} />
     </Link>
@@ -292,10 +296,12 @@ function MessageActions({
 export function ChatPage() {
   const {
     activeConversation,
+    storageError,
     settings,
     appendMessages,
     updateMessage,
     removeMessage,
+    clearInteractionReferences,
   } = useApp();
   const { config, loading: configLoading, error: configError } = useConfig();
   const [draft, setDraft] = useState("");
@@ -312,6 +318,7 @@ export function ChatPage() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const pendingAttachmentsRef = useRef<ChatAttachment[]>([]);
   const pendingConversationRef = useRef(activeConversation.id);
+  useEffect(() => () => abortRef.current?.abort(), []);
 
   const messageCount = activeConversation.messages.length;
   useEffect(() => {
@@ -386,13 +393,18 @@ export function ChatPage() {
     request: ChatStreamRequest,
     assistantId: string,
     initialDebug: ChatMessageDebug,
+    rebuildMessages: () => Promise<ChatStreamRequest["messages"]>,
   ) {
     const controller = new AbortController();
     abortRef.current = controller;
     setRunning(true);
     let assembled = "";
+    let thinkingSummary = "";
+    const sources: NonNullable<ChatMessage["sources"]> = [];
+    const searchSuggestions: string[] = [];
     let generatedImages: ChatGeneratedImage[] = [];
     let debug = initialDebug;
+    let recovering = false;
     const clientStartedMs = Date.parse(initialDebug.timing.clientStartedAt);
     function updateDebug(next: ChatMessageDebug, patch: Partial<ChatMessage> = {}) {
       debug = next;
@@ -407,7 +419,21 @@ export function ChatPage() {
       };
     }
     try {
-      await streamChat(request, {
+      await streamChatWithRecovery(request, {
+        onGrounding(data) {
+          for (const source of data.sources ?? []) {
+            if (/^https?:\/\//i.test(source.url) && !sources.some((existing) => existing.url === source.url)) sources.push(source);
+          }
+          if (data.searchSuggestions && !searchSuggestions.includes(data.searchSuggestions)) searchSuggestions.push(data.searchSuggestions);
+          updateMessage(conversationId, assistantId, { sources: [...sources], searchSuggestions: [...searchSuggestions] });
+        },
+        onThinking(text) {
+          thinkingSummary += text;
+          updateMessage(conversationId, assistantId, { thinkingSummary });
+        },
+        onActivity(text) {
+          updateMessage(conversationId, assistantId, { activity: text });
+        },
         onOpen(response) {
           updateDebug({
             ...debug,
@@ -500,7 +526,13 @@ export function ChatPage() {
               events: [...(debug.response.events ?? []), { event: "done", data: done }],
             },
             timing: finishTiming(),
-          }, { status: "complete", content: assembled });
+          }, { status: "complete", content: assembled, activity: undefined,
+            ...(recovering ? { recoveryNotice: "Conversation restored from local history." } : {}),
+            ...(done.interactionId && request.interactions ? { interaction: {
+              id: done.interactionId, model: request.model, apiVersion: request.provider === "vertex" ? "v1beta1" : request.interactions.apiVersion,
+              ...(done.interactionProject ? { project: done.interactionProject } : {}),
+            } } : {}),
+          });
         },
         onError(error) {
           updateDebug({
@@ -514,14 +546,30 @@ export function ChatPage() {
             },
           });
         },
-      }, controller.signal);
+      }, controller.signal, {
+        rebuildMessages,
+        onRecover(error) {
+          recovering = true;
+          clearInteractionReferences(conversationId);
+          updateDebug({ ...debug, response: { ...debug.response,
+            events: [...(debug.response.events ?? []), { event: "error", data: error }],
+          } }, { recoveryNotice: "Stored context is unavailable. Restoring this conversation from local history…" });
+        },
+        onRebuilt(rebuilt) {
+          updateDebug({ ...debug, request: { ...debug.request,
+            local: { ...debug.request.local, body: compactDebugValue(rebuilt, { maxStringCharacters: 4_000, maxArrayItems: 40 }) },
+          } });
+        },
+      });
     } catch (error) {
       if (controller.signal.aborted) {
         updateDebug({
           ...debug,
           response: { ...debug.response, status: "stopped", content: assembled },
           timing: finishTiming(),
-        }, { status: "stopped", content: assembled });
+        }, { status: "stopped", content: assembled, interaction: undefined,
+          ...(recovering ? { recoveryNotice: "Conversation restoration stopped. Your local history is preserved." } : {}),
+        });
       } else {
         const streamError: ChatStreamErrorData = debug.response.error ?? {
           message: error instanceof Error ? error.message : String(error),
@@ -542,6 +590,8 @@ export function ChatPage() {
           status: "error",
           content: assembled,
           error: streamError.message,
+          interaction: undefined,
+          ...(recovering ? { recoveryNotice: "Conversation restoration could not finish. Your local history is preserved." } : {}),
         });
       }
     } finally {
@@ -553,20 +603,26 @@ export function ChatPage() {
   function buildStreamRequest(
     messages: ChatStreamRequest["messages"],
     tool: ChatToolId | null,
+    previousInteractionId?: string,
   ): ChatStreamRequest {
     const image = tool === "image";
     const model = image ? IMAGE_MODEL_ID : activeModel;
     const region = settings.provider === "vertex"
-      ? (image ? IMAGE_MODEL_REGION : settings.region)
+      ? (usesInteractions(settings) ? "global" : image ? IMAGE_MODEL_REGION : settings.region)
       : undefined;
     return {
+      ...(usesInteractions(settings) ? {
+        interactions: settings.interactions,
+        ...(settings.provider === "vertex" && config?.project ? { interactionProject: config.project } : {}),
+        ...(previousInteractionId ? { previousInteractionId } : {}),
+      } : {}),
       provider: settings.provider,
       model,
       ...(region ? { region } : {}),
       systemInstruction: settings.systemInstruction,
       temperature: settings.temperature,
       maxOutputTokens: settings.maxOutputTokens,
-      ...(!image ? { thinkingLevel: settings.thinkingLevel } : {}),
+      ...(!image && !usesInteractions(settings) ? { thinkingLevel: settings.thinkingLevel } : {}),
       ...(tool ? { tool } : {}),
       messages,
     };
@@ -574,6 +630,7 @@ export function ChatPage() {
 
   function requestSnapshot(request: ChatStreamRequest) {
     return {
+      api: request.interactions ? "interactions" as const : "generateContent" as const,
       provider: request.provider,
       model: request.model,
       ...(request.region ? { region: request.region } : {}),
@@ -589,13 +646,14 @@ export function ChatPage() {
     const now = new Date().toISOString();
     const attachments = [...pendingAttachmentsRef.current];
     try {
-      const currentHistory = await messageHistory(activeConversation.messages);
+      const plan = selectInteractionHistory(activeConversation.messages, settings, selectedTool, config.project);
+      const currentHistory = await messageHistory(plan.messages);
       const files = attachments.length
         ? await Promise.all(attachments.map(attachmentToRequestPart))
         : undefined;
       const messages = [...currentHistory, { role: "user" as const, content: clean, ...(files ? { files } : {}) }];
       const tool = selectedTool;
-      const request = buildStreamRequest(messages, tool);
+      const request = buildStreamRequest(messages, tool, plan.previousInteractionId);
       const debug = initialDebugTrace(request, now);
       const userMessage: ChatMessage = {
         id: createId(), role: "user", content: clean, createdAt: now, status: "complete",
@@ -616,7 +674,8 @@ export function ChatPage() {
       pendingAttachmentsRef.current = [];
       setPendingAttachments([]);
       setDraft("");
-      void run(conversationId, request, assistantMessage.id, debug);
+      void run(conversationId, request, assistantMessage.id, debug,
+        () => messageHistory([...activeConversation.messages, userMessage]));
     } catch (error) {
       setAttachmentError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -645,9 +704,10 @@ export function ChatPage() {
     setPreparing(true);
     setAttachmentError(null);
     try {
-      const messages = await messageHistory(baseMessages);
       const tool = message.tool ?? null;
-      const request = buildStreamRequest(messages, tool);
+      const plan = selectInteractionHistory(baseMessages, settings, tool, config.project);
+      const messages = await messageHistory(plan.messages);
+      const request = buildStreamRequest(messages, tool, plan.previousInteractionId);
       const startedAt = new Date().toISOString();
       const debug = initialDebugTrace(request, startedAt);
       const assistantMessage: ChatMessage = {
@@ -663,7 +723,7 @@ export function ChatPage() {
       void deleteGeneratedImages(message.generatedImages ?? []).catch(() => undefined);
       removeMessage(activeConversation.id, message.id);
       appendMessages(activeConversation.id, [assistantMessage]);
-      void run(activeConversation.id, request, assistantMessage.id, debug);
+      void run(activeConversation.id, request, assistantMessage.id, debug, () => messageHistory(baseMessages));
     } catch (error) {
       setAttachmentError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -678,19 +738,31 @@ export function ChatPage() {
 
   return (
     <div className="chat-page">
+      {storageError ? <p className="panel-error" role="alert">{storageError}</p> : null}
       <div className="chat-topbar">
         <ProviderBadge />
+        {usesInteractions(settings) ? (
+          <div className="interaction-session">
+            <span>{settings.interactions.stateful ? "Stateful" : "Full history"} · Interactions {interactionApiVersion(settings)}{settings.provider === "vertex" ? ` · ${config?.project ?? "Project not configured"} · global` : ""}</span>
+            {activeConversation.messages.some((message) => message.interaction) ? (
+              <button className="secondary-button" disabled={running || preparing} onClick={() => {
+                clearInteractionReferences(activeConversation.id);
+                setCacheNotice("The next turn will rebuild Gemini's context from this chat's local history.");
+              }}>Reconnect from local history</button>
+            ) : null}
+          </div>
+        ) : null}
       </div>
 
       <div className={`messages${activeConversation.messages.length === 0 ? " messages-empty" : ""}`}>
         {activeConversation.messages.length === 0 ? (
           <section className="chat-empty-state">
             <div className="hero-orb"><Sparkles size={27} /></div>
-            <p className="eyebrow">VERTEX-FIRST LEARNING LAB</p>
+            <p className="eyebrow">GEMINI CONVERSATION LAB</p>
             <h1>What are you preparing for?</h1>
             <p className="hero-copy">
               Explore a model, plan an enterprise chatbot decision, or test how an endpoint behaves.
-              Your conversations stay in this browser.
+              Chat history is saved in this browser. Stateful mode also stores interactions with Gemini.
             </p>
             <div className="suggestion-grid">
               {SUGGESTIONS.map((suggestion) => (
@@ -722,6 +794,9 @@ export function ChatPage() {
                     ) : null}
                   </div>
                   <div className="message-content" dir={directionFor(message.content)}>
+                    {message.recoveryNotice ? <p className="conversation-recovery" role="status">{message.recoveryNotice}</p> : null}
+                    {message.thinkingSummary ? <details className="thinking-summary"><summary>Thinking summary</summary><p>{message.thinkingSummary}</p></details> : null}
+                    {message.status === "streaming" && message.activity ? <p className="interaction-activity" role="status">{message.activity}</p> : null}
                     {message.role === "assistant"
                       ? message.content
                         ? (
@@ -736,6 +811,16 @@ export function ChatPage() {
                       : <p>{message.content}</p>}
                     {message.status === "streaming" ? <span className="streaming-caret" aria-label="Generating" /> : null}
                   </div>
+                  {message.sources?.length ? <div className="interaction-sources" aria-label="Sources">
+                    {message.sources.filter((source) => /^https?:\/\//i.test(source.url)).map((source) => <a key={source.url} href={source.url} target="_blank" rel="noreferrer">{source.title}</a>)}
+                  </div> : null}
+                  {message.debug?.response.done?.finishReason === "MAX_TOKENS" ? <p className="interaction-activity">Response reached the token limit. Increase maximum output tokens in Settings, then retry.</p> : null}
+                  {message.searchSuggestions?.map((html, index) => <iframe
+                    key={index} className="search-suggestions" title={`Google Search suggestions ${index + 1}`}
+                    sandbox="allow-popups allow-popups-to-escape-sandbox"
+                    referrerPolicy="no-referrer"
+                    srcDoc={`<!doctype html><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src https: data:; base-uri 'none'; form-action 'none'"><base target="_blank">${html}`}
+                  />)}
                   {message.generatedImages?.length ? (
                     <div className="generated-images" aria-label="Generated images">
                       {message.generatedImages.map((image) => (
@@ -812,6 +897,7 @@ export function ChatPage() {
               {processingFiles ? <LoaderCircle className="spin" size={18} /> : <Paperclip size={18} />}
             </button>
             <ComposerTools
+              interactionMode={usesInteractions(settings)}
               selected={selectedTool}
               onSelect={setSelectedTool}
               disabled={running || preparing}
