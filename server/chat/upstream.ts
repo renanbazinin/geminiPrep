@@ -148,16 +148,17 @@ export function describeUpstreamRequest(
   };
 }
 
-export async function* parseSseJson(
+export async function* parseSseJson<T = UpstreamChunk>(
   stream: ReadableStream<Uint8Array>,
-): AsyncGenerator<UpstreamChunk> {
+): AsyncGenerator<T> {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
   try {
     while (true) {
       const { done, value } = await reader.read();
-      buffer += decoder.decode(value, { stream: !done }).replace(/\r\n/g, "\n");
+      buffer += decoder.decode(value, { stream: !done });
+      buffer = buffer.replace(/\r\n/g, "\n");
       let boundary = buffer.indexOf("\n\n");
       while (boundary >= 0) {
         const block = buffer.slice(0, boundary);
@@ -168,7 +169,7 @@ export async function* parseSseJson(
           .map((line) => line.slice(5).trimStart())
           .join("\n");
         if (data && data !== "[DONE]") {
-          yield JSON.parse(data) as UpstreamChunk;
+          yield JSON.parse(data) as T;
         }
         boundary = buffer.indexOf("\n\n");
       }
@@ -177,9 +178,10 @@ export async function* parseSseJson(
     const trailing = buffer.trim();
     if (trailing.startsWith("data:")) {
       const data = trailing.slice(5).trim();
-      if (data && data !== "[DONE]") yield JSON.parse(data) as UpstreamChunk;
+      if (data && data !== "[DONE]") yield JSON.parse(data) as T;
     }
   } finally {
+    await reader.cancel().catch(() => undefined);
     reader.releaseLock();
   }
 }

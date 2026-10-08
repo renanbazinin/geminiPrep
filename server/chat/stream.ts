@@ -2,6 +2,7 @@ import type { Response } from "express";
 import type { ChatStreamEvent, ChatStreamRequest } from "../../shared/contracts.js";
 import { handoffForFunctionCall, specialistRequestFromHandoff } from "../../shared/chat-tools.js";
 import { getVertexAccessToken } from "../vertex-auth.js";
+import { proxyInteractionStream } from "./interactions.js";
 import {
   createUpstreamRequest,
   describeUpstreamRequest,
@@ -126,6 +127,7 @@ export async function proxyChatStream(options: {
   signal?: AbortSignal;
 }): Promise<void> {
   const { request, project, response, fetchImpl = fetch, signal } = options;
+  if (request.interactions) return proxyInteractionStream({ request, project, response, fetchImpl, signal });
   const serverStartedMs = Date.now();
   const serverStartedAt = new Date(serverStartedMs).toISOString();
   const vertexToken = request.provider === "vertex" ? await getVertexAccessToken() : undefined;

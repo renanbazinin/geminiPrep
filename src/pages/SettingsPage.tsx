@@ -4,10 +4,14 @@ import type { ProviderId, StoredCacheEntry, ThinkingLevel } from "../../shared/c
 import { useApp } from "../contexts/AppContext";
 import { useConfig } from "../contexts/ConfigContext";
 import { forgetCache, formatRemaining, loadCaches, remainingMs } from "../lib/cache-registry";
+import { InteractionSettings } from "../components/InteractionSettings";
+import { usesInteractions } from "../../shared/interactions";
 
 export function SettingsPage() {
-  const { settings, updateSettings, resetSettings } = useApp();
+  const { settings, updateSettings, resetSettings, storageError } = useApp();
   const { config, loading, error, reload } = useConfig();
+  const interactionMode = usesInteractions(settings);
+  const modelManagedSampling = interactionMode && settings.provider === "gemini" && settings.interactions.apiVersion === "v1";
 
   function selectProvider(provider: ProviderId) {
     updateSettings({ provider });
@@ -25,6 +29,20 @@ export function SettingsPage() {
           <RotateCcw size={16} /> Reset defaults
         </button>
       </header>
+      {storageError ? <p className="panel-error" role="alert">{storageError}</p> : null}
+
+      <section className="interactions-overview" aria-label="Stateful chat settings">
+        <div>
+          <p className="eyebrow">GEMINI INTERACTIONS</p>
+          <h2>Conversations that remember</h2>
+          <p>{interactionMode ? (settings.interactions.stateful ? "Stateful memory is on. Follow-ups continue your stored conversation." : "Interactions is on. Each turn sends your local conversation history.") : "Enable persistent Gemini conversations, recovery from expired IDs, and advanced reasoning and tool controls."}</p>
+        </div>
+        {interactionMode ? <a className="secondary-button" href="#conversation-api">Memory, tools & advanced settings</a> : (
+          <button className="primary-button" onClick={() => {
+            updateSettings(settings.provider === "vertex" ? { vertexApi: "interactions" } : { geminiApi: "interactions" });
+          }}>Use Gemini Interactions</button>
+        )}
+      </section>
 
       {error ? (
         <div className="panel-error" role="alert">
@@ -36,7 +54,7 @@ export function SettingsPage() {
       <section className="settings-section">
         <div className="settings-section-title">
           <Cloud size={19} />
-          <div><h2>Provider</h2><p>Vertex is the primary enterprise path; Gemini API is available for comparison.</p></div>
+          <div><h2>Provider</h2><p>Use stateful Interactions with your Google Cloud project or a Gemini Developer API key.</p></div>
         </div>
         <div className="provider-cards" aria-label="Provider" role="radiogroup">
           {(["vertex", "gemini"] as const).map((provider) => {
@@ -84,7 +102,9 @@ export function SettingsPage() {
             </select>
           </label>
 
-          {settings.provider === "vertex" ? (
+          {settings.provider === "vertex" && interactionMode ? (
+            <div className="form-field form-field-static"><span>Google Cloud endpoint</span><strong>{config?.project ?? "Project not configured"} · global</strong><small>Interactions uses your server's Google Cloud credentials. Preview is available on the global endpoint.</small></div>
+          ) : settings.provider === "vertex" ? (
             <label className="form-field">
               <span>Region</span>
               <select value={settings.region} onChange={(event) => updateSettings({ region: event.target.value })} disabled={!config}>
@@ -122,9 +142,10 @@ export function SettingsPage() {
               max={2}
               step={0.05}
               value={settings.temperature}
+              disabled={modelManagedSampling}
               onChange={(event) => updateSettings({ temperature: Number(event.target.value) })}
             />
-            <small>Lower is more consistent; higher is more varied.</small>
+            <small>{modelManagedSampling ? "Stable Interactions v1 uses model-managed sampling; temperature is not sent." : "Lower is more consistent; higher is more varied."}</small>
           </label>
 
           <label className="form-field">
@@ -143,7 +164,7 @@ export function SettingsPage() {
             <small>Provider/model limits may be lower than this local guardrail.</small>
           </label>
 
-          <label className="form-field">
+          {!interactionMode ? <label className="form-field">
             <span>Thinking level</span>
             <select
               value={settings.thinkingLevel}
@@ -157,11 +178,13 @@ export function SettingsPage() {
               <code> thoughtsTokenCount</code>. If a reply stops with <code>MAX_TOKENS</code> after very few visible
               tokens, thinking consumed the budget: raise the budget or drop to low.
             </small>
-          </label>
+          </label> : null}
         </div>
       </section>
 
-      <section className="settings-section">
+      <InteractionSettings />
+
+      {settings.provider === "vertex" && !interactionMode ? <section className="settings-section">
         <div className="settings-section-title">
           <Database size={19} />
           <div>
@@ -212,7 +235,7 @@ export function SettingsPage() {
 
           <CacheRegistryPanel />
         </div>
-      </section>
+      </section> : null}
     </div>
   );
 }
