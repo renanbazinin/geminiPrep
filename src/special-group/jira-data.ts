@@ -17,6 +17,21 @@ export function useProjects(enabled: boolean) {
   return { projects, error };
 }
 
+/** Field IDs on the chosen work type's create screen; null while unknown (the link then includes everything). */
+export function useScreenFields(projectKey: string | undefined, typeId: string | undefined, enabled: boolean) {
+  const [fields, setFields] = useState<string[] | null>(null);
+  useEffect(() => {
+    setFields(null);
+    if (!enabled || !projectKey || !typeId) return;
+    let live = true;
+    specialGroupApi.screenFields(projectKey, typeId)
+      .then(result => { if (live) setFields(result.fields.map(f => f.fieldId)); })
+      .catch(() => { /* Unknown screen: build the full link rather than guess. */ });
+    return () => { live = false; };
+  }, [projectKey, typeId, enabled]);
+  return fields;
+}
+
 export function useProjectOptions(projectKey: string | undefined, enabled: boolean) {
   const [options, setOptions] = useState<ProjectOptions | null>(null);
   const [loading, setLoading] = useState(false);

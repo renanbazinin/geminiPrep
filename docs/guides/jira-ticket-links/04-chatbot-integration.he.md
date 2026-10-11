@@ -73,7 +73,8 @@ flowchart LR
 `update_ticket_draft` מחזיר את הטיוטה, את ההערות (notes) ואת **מה שעדיין חסר**, אבל לא את ה־URL:
 
 ```json
-{ "draft": { "...": "..." }, "notes": [], "linkReady": true, "missing": [] }
+{ "draft": { "...": "..." }, "notes": [], "linkReady": true, "missing": [],
+  "warnings": ["Priority isn't on the Bug create screen, so Jira would ignore it."] }
 ```
 
 ה־backend שלכם בונה את ה־URL בעצמו ([שלב 3](03-create-link.he.md)), וממשק הצ׳אט מציג אותו ככפתור **Open in Jira** (פתיחה ב־Jira). מודלי LLM עלולים לשבש כתובות URL ארוכות, וקישור שנבנה רק ממזהים שעברו אימות אינו ניתן להטיה באמצעות פרומפט.
@@ -89,7 +90,8 @@ update_ticket_draft; the person opens the "Open in Jira" button and creates it.
 2. Call get_project_options before choosing work type, priority, epic, components.
 3. search_issues for duplicates; if one is close, mention its key and ask.
 4. Fill every field you can justify; leave the rest empty rather than guess.
-5. Resolve any notes returned by update_ticket_draft with the person.
+5. Resolve any notes returned by update_ticket_draft with the person, and mention
+   any warnings (fields that won't be prefilled).
 6. Reply briefly: what's in the draft and what's missing. Don't paste the link.
 
 Summary: specific, under 100 characters. Description sections: Context, Steps to
@@ -132,4 +134,4 @@ Default project: {{projectKey}}. Current draft: {{draftJson}}
 - [ ] נתוני אנשים שנשלחים למודל מוגבלים לשם תצוגה ולמזהה: ללא כתובות אימייל.
 - [ ] טקסט טיקטים שמגיע מ־Jira מטופל כקלט לא מהימן (סיכון להזרקת פרומפט, prompt injection).
 - [ ] קישורים ארוכים מכ־6,000 תווים מציגים אזהרה.
-- [ ] כל שדה במסך היצירה נבדק פעם אחת במופע שלכם ([שלב 3](03-create-link.he.md)).
+- [ ] שדות שאינם מופיעים במסך היצירה של סוג העבודה מושמטים מהקישור, והמשתמש מקבל על כך הודעה ([שלב 3](03-create-link.he.md)).

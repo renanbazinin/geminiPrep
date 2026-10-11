@@ -90,7 +90,7 @@ The `+` replacement is safe: `URLSearchParams` writes a real `+` as `%2B`, so ev
 ## Limits and checks
 
 - **Length.** Keep links under about 6,000 characters. Proxies and browsers can cut longer ones. If the description is long, warn the user and let them paste it on the create screen.
-- **Hidden fields are ignored.** If a field isn't on the project's create screen, Jira silently drops its parameter.
+- **Fields missing from the create screen are ignored.** If a field isn't on that work type's create screen, Jira silently drops its parameter. Check with `GET /issue/createmeta/{KEY}/issuetypes/{typeId}`, which lists each `fieldId` on the screen. Leave missing fields out of the link and tell the user. On a real team-managed project, `priority` wasn't on any create screen, so `priority=2` would have been silently dropped.
 - **Not every parameter is documented.** Atlassian documents `pid`, `issuetype`, `summary`, and `description`. Check the rest once on your instance: build a full link, open it, compare each field, and close the form without creating.
 - **The parent can't always be prefilled.** If neither `parent` nor an Epic Link field applies, leave it out and tell the user which epic to pick on the screen.
 

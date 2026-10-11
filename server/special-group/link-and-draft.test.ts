@@ -50,6 +50,14 @@ describe("buildCreateLink", () => {
     expect(link.warnings[0]).toContain("DESK-12");
   });
 
+  it("leaves out fields that aren't on the create screen, and says which", () => {
+    const link = buildCreateLink(SITE, full, { name: "parent", mode: "parent" }, ["summary", "description", "reporter", "labels", "parent"]);
+    const params = new URL(link.url!).searchParams;
+    expect([...new Set(params.keys())]).toEqual(["pid", "issuetype", "summary", "description", "reporter", "labels", "parent"]);
+    expect(link.warnings).toEqual(["Priority", "Assignee", "Components", "Fix versions"]
+      .map(label => `${label} isn't on the Bug create screen, so Jira would ignore it. Set it after creating, or ask a Jira admin to add the field.`));
+  });
+
   it("needs a project and work type before a link exists", () => {
     expect(buildCreateLink(SITE, { summary: "x" })).toEqual({ url: null, missing: ["project", "work type"], warnings: [] });
     expect(buildCreateLink(SITE, { project: full.project, issueType: full.issueType }).missing).toEqual(["summary"]);

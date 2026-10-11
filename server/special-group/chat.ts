@@ -2,7 +2,7 @@ import type { ChatStreamRequest } from "../../shared/contracts.js";
 import { buildCreateLink } from "../../shared/special-group/create-link.js";
 import type { SpecialGroupChatResult, TicketDraft } from "../../shared/special-group/types.js";
 import { createUpstreamRequest } from "../chat/upstream.js";
-import { getProjectOptions } from "./jira-lookups.js";
+import { getProjectOptions, screenFieldIds } from "./jira-lookups.js";
 import { runToolLoop, toGenerateContentUrl } from "./model-loop.js";
 import type { ReadOnlyJiraClient } from "./read-only-client.js";
 import { buildSystemPrompt } from "./system-prompt.js";
@@ -46,5 +46,6 @@ export async function runSpecialGroupChat(options: {
   if (!toolbox.state.draftChanged) return { text, lookups };
   const next = toolbox.state.draft;
   const projectOptions = toolbox.state.options ?? (next.project ? await getProjectOptions(client, next.project.key).catch(() => null) : null);
-  return { text, lookups, draft: next, link: buildCreateLink(client.config.siteUrl, next, projectOptions?.parentParam ?? null) };
+  const screenFields = await screenFieldIds(client, next);
+  return { text, lookups, draft: next, link: buildCreateLink(client.config.siteUrl, next, projectOptions?.parentParam ?? null, screenFields) };
 }

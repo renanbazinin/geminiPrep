@@ -73,7 +73,8 @@ If the project changes, reset the fields that belong to a project (work type, ep
 `update_ticket_draft` returns the draft, notes, and **what's still missing**, but not the URL:
 
 ```json
-{ "draft": { "...": "..." }, "notes": [], "linkReady": true, "missing": [] }
+{ "draft": { "...": "..." }, "notes": [], "linkReady": true, "missing": [],
+  "warnings": ["Priority isn't on the Bug create screen, so Jira would ignore it."] }
 ```
 
 Your backend builds the URL itself ([step 3](03-create-link.en.md)) and the chat UI shows it as an **Open in Jira** button. LLMs can mangle long URLs, and a link built only from validated IDs can't be steered by a prompt.
@@ -89,7 +90,8 @@ update_ticket_draft; the person opens the "Open in Jira" button and creates it.
 2. Call get_project_options before choosing work type, priority, epic, components.
 3. search_issues for duplicates; if one is close, mention its key and ask.
 4. Fill every field you can justify; leave the rest empty rather than guess.
-5. Resolve any notes returned by update_ticket_draft with the person.
+5. Resolve any notes returned by update_ticket_draft with the person, and mention
+   any warnings (fields that won't be prefilled).
 6. Reply briefly: what's in the draft and what's missing. Don't paste the link.
 
 Summary: specific, under 100 characters. Description sections: Context, Steps to
@@ -132,4 +134,4 @@ The model mapped "pretty urgent" to **High** and picked the **Booking reliabilit
 - [ ] People data sent to the model is limited to display name and ID: no emails.
 - [ ] Ticket text from Jira is treated as untrusted input (prompt-injection risk).
 - [ ] Links over about 6,000 characters show a warning.
-- [ ] Each create-screen field was checked once on your instance ([step 3](03-create-link.en.md)).
+- [ ] Fields that aren't on the work type's create screen are left out of the link, and the user is told ([step 3](03-create-link.en.md)).

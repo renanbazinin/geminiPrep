@@ -18,6 +18,7 @@
 | חיפוש (Epics, כפילויות) | `POST /search/jql` | `GET /search?jql=…` |
 | אנשים | `GET /user/search?query=…` | `GET /user/search?username=…` |
 | פריט עבודה (work item) בודד | `GET /issue/{KEY-N}` | `GET /issue/{KEY-N}` |
+| השדות במסך היצירה של סוג עבודה | `GET /issue/createmeta/{KEY}/issuetypes/{typeId}` | `GET /issue/createmeta/{KEY}/issuetypes/{typeId}` |
 
 החיפוש ב־Cloud הוא `POST` רק משום שה־JQL נשלח בגוף הבקשה. הוא לא משנה שום דבר.
 

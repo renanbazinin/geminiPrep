@@ -27,6 +27,8 @@ export const specialGroupApi = {
     request<{ connected: true; account: string | null; projects: number }>("/connect", input),
   projects: (query = "") => request<{ projects: ProjectSummary[] }>(`/projects?${new URLSearchParams({ query })}`),
   projectOptions: (key: string, fresh = false) => request<ProjectOptions>(`/projects/${encodeURIComponent(key)}/options${fresh ? "?fresh=1" : ""}`),
+  screenFields: (key: string, typeId: string) =>
+    request<{ fields: Array<{ fieldId: string; name: string; required: boolean }> }>(`/projects/${encodeURIComponent(key)}/types/${encodeURIComponent(typeId)}/fields`),
   people: (query: string) => request<{ people: JiraPerson[] }>(`/people?${new URLSearchParams({ query })}`),
   chat: (input: ChatSettings & { messages: Array<{ role: "user" | "assistant"; content: string }>; draft: TicketDraft }) =>
     request<SpecialGroupChatResult>("/chat", input),

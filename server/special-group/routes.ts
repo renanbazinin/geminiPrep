@@ -6,7 +6,7 @@ import { validateChatRequest } from "../chat/validation.js";
 import { getVertexAccessToken } from "../vertex-auth.js";
 import { runSpecialGroupChat } from "./chat.js";
 import { isSiteUrl, saveLocalConnection, specialGroupConfig, type SpecialGroupConfig } from "./config.js";
-import { clearProjectOptionsCache, findPeople, getProjectOptions, listProjects } from "./jira-lookups.js";
+import { clearProjectOptionsCache, findPeople, getCreateScreenFields, getProjectOptions, listProjects } from "./jira-lookups.js";
 import { localOnly } from "./local-only.js";
 import { ReadOnlyJiraClient } from "./read-only-client.js";
 import { SPECIAL_GROUP_PROMPT } from "./system-prompt.js";
@@ -70,6 +70,11 @@ export function specialGroupRoutes(options: { fetchImpl?: typeof fetch; config?:
 
   router.get("/projects/:key/options", async (req, res) => {
     try { res.json(await getProjectOptions(client(), req.params.key, { fresh: req.query.fresh === "1" })); }
+    catch (error) { fail(res, 502, error); }
+  });
+
+  router.get("/projects/:key/types/:typeId/fields", async (req, res) => {
+    try { res.json({ fields: await getCreateScreenFields(client(), req.params.key, req.params.typeId) }); }
     catch (error) { fail(res, 502, error); }
   });
 

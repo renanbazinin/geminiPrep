@@ -8,7 +8,7 @@ import { ConnectPanel } from "./components/ConnectPanel";
 import { DraftCard } from "./components/DraftCard";
 import { PromptViewer } from "./components/PromptViewer";
 import { SessionList } from "./components/SessionList";
-import { useProjectOptions, useProjects } from "./jira-data";
+import { useProjectOptions, useProjects, useScreenFields } from "./jira-data";
 import { useSessions } from "./sessions";
 import "./special-group.css";
 
@@ -25,6 +25,7 @@ export function SpecialGroupPage() {
   const connected = Boolean(connection?.configured);
   const { projects, error: projectsError } = useProjects(connected);
   const projectOptions = useProjectOptions(session.draft.project?.key, connected);
+  const screenFields = useScreenFields(session.draft.project?.key, session.draft.issueType?.id, connected);
 
   async function loadConnection() {
     try { const config = await specialGroupApi.config(); setConnection(config); setConnectionError(""); if (!config.configured) setPanel("connect"); }
@@ -88,7 +89,7 @@ export function SpecialGroupPage() {
       <ChatPanel messages={session.messages} busy={busyId === session.id} canSend={connected && busyId === null}
         modelLabel={chatSettings.model} onSend={text => void send(text)} />
       <DraftCard draft={session.draft} siteUrl={siteUrl} projects={projects}
-        options={projectOptions.options} optionsLoading={projectOptions.loading} optionsError={projectOptions.error}
+        options={projectOptions.options} screenFields={screenFields} optionsLoading={projectOptions.loading} optionsError={projectOptions.error}
         disabled={busyId === session.id} onReloadOptions={projectOptions.reload}
         onChange={(draft: TicketDraft) => sessions.setDraft(session.id, draft)} />
     </div>

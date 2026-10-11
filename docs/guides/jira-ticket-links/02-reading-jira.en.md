@@ -18,6 +18,7 @@ To fill a ticket correctly, the bot needs the **real** values for one project: i
 | Search (epics, duplicates) | `POST /search/jql` | `GET /search?jql=…` |
 | People | `GET /user/search?query=…` | `GET /user/search?username=…` |
 | One work item | `GET /issue/{KEY-N}` | `GET /issue/{KEY-N}` |
+| Fields on a work type's create screen | `GET /issue/createmeta/{KEY}/issuetypes/{typeId}` | `GET /issue/createmeta/{KEY}/issuetypes/{typeId}` |
 
 Search on Cloud is a `POST` only because the JQL goes in the body. It doesn't change anything.
 

@@ -1,7 +1,7 @@
 import { buildCreateLink } from "../../shared/special-group/create-link.js";
 import type { ProjectOptions, TicketDraft } from "../../shared/special-group/types.js";
 import { applyDraftUpdate, parseDraftUpdate } from "./draft-resolver.js";
-import { findPeople, getIssue, getProjectOptions, listProjects, searchIssues } from "./jira-lookups.js";
+import { findPeople, getIssue, getProjectOptions, listProjects, screenFieldIds, searchIssues } from "./jira-lookups.js";
 import type { ReadOnlyJiraClient } from "./read-only-client.js";
 
 // The tools the assistant may call. Five read Jira; one edits the local draft.
@@ -53,7 +53,7 @@ export function createToolbox(client: ReadOnlyJiraClient, initialDraft: TicketDr
         state.draft = result.draft;
         state.options = result.options;
         state.draftChanged = true;
-        const link = buildCreateLink(client.config.siteUrl, result.draft, result.options?.parentParam ?? null);
+        const link = buildCreateLink(client.config.siteUrl, result.draft, result.options?.parentParam ?? null, await screenFieldIds(client, result.draft));
         // The URL itself stays out of the model's hands; the page shows it as a button.
         return { draft: result.draft, notes: result.notes, linkReady: link.url !== null, missing: link.missing, warnings: link.warnings };
       }

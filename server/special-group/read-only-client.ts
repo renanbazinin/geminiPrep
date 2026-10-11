@@ -10,7 +10,7 @@ const READ_ENDPOINTS: RegExp[] = [
   /^\/rest\/api\/3\/project\/search\?/,
   /^\/rest\/api\/3\/project\/[A-Z][A-Z0-9_]*$/,
   /^\/rest\/api\/3\/project\/[A-Z][A-Z0-9_]*\/(components|versions)$/,
-  /^\/rest\/api\/3\/issue\/createmeta\/[A-Z][A-Z0-9_]*\/issuetypes\?/,
+  /^\/rest\/api\/3\/issue\/createmeta\/[A-Z][A-Z0-9_]*\/issuetypes(\/\d+)?\?/,
   /^\/rest\/api\/3\/priority\/search\?/,
   /^\/rest\/api\/3\/field$/,
   /^\/rest\/api\/3\/issue\/[A-Z][A-Z0-9_]*-\d+\?/,

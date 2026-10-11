@@ -42,6 +42,8 @@ describe("ReadOnlyJiraClient", () => {
   it("allows only listed read endpoints", () => {
     expect(isAllowedReadPath("/rest/api/3/project/DESK")).toBe(true);
     expect(isAllowedReadPath("/rest/api/3/issue/DESK-1?fields=summary")).toBe(true);
+    expect(isAllowedReadPath("/rest/api/3/issue/createmeta/DESK/issuetypes/10011?maxResults=100")).toBe(true);
+    expect(isAllowedReadPath("/rest/api/3/issue/createmeta/DESK/issuetypes/10011/x?")).toBe(false);
     expect(isAllowedReadPath("/rest/api/3/issue")).toBe(false);
     expect(isAllowedReadPath("/rest/api/3/issue/DESK-1/transitions")).toBe(false);
     expect(isAllowedReadPath("/rest/api/3/issue/DESK-1/comment")).toBe(false);

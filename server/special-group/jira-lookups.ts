@@ -78,7 +78,34 @@ export async function getProjectOptions(client: ReadOnlyJiraClient, rawKey: stri
   return value;
 }
 
-export function clearProjectOptionsCache() { optionsCache.clear(); }
+export function clearProjectOptionsCache() { optionsCache.clear(); screenCache.clear(); }
+
+export type ScreenField = { fieldId: string; name: string; required: boolean };
+const screenCache = new Map<string, { expires: number; value: ScreenField[] }>();
+
+/** Fields on one work type's create screen. The create link can only prefill fields listed here. */
+export async function getCreateScreenFields(client: ReadOnlyJiraClient, rawKey: string, typeId: string, now = Date.now()): Promise<ScreenField[]> {
+  const key = projectKey(rawKey);
+  if (!/^\d{1,18}$/.test(typeId)) throw new Error("A valid work type ID is required.");
+  const cacheKey = `${client.config.baseUrl}|${key}|${typeId}`;
+  const cached = screenCache.get(cacheKey);
+  if (cached && cached.expires > now) return cached.value;
+  const fields: ScreenField[] = [];
+  for (let startAt = 0; startAt < 1000; startAt += 100) {
+    const page = await client.get(`/rest/api/3/issue/createmeta/${key}/issuetypes/${typeId}?startAt=${startAt}&maxResults=100`);
+    const batch: any[] = page.fields ?? page.results ?? page.values ?? [];
+    fields.push(...batch.map(f => ({ fieldId: String(f.fieldId ?? f.key), name: String(f.name ?? f.fieldId), required: Boolean(f.required) })));
+    if (!batch.length || page.isLast || startAt + batch.length >= Number(page.total ?? 0)) break;
+  }
+  screenCache.set(cacheKey, { expires: now + OPTIONS_TTL_MS, value: fields });
+  return fields;
+}
+
+/** Field IDs for the draft's work type, or null when unknown (then the link includes every field). */
+export async function screenFieldIds(client: ReadOnlyJiraClient, draft: { project?: { key: string }; issueType?: { id: string } }) {
+  if (!draft.project || !draft.issueType) return null;
+  return getCreateScreenFields(client, draft.project.key, draft.issueType.id).then(fields => fields.map(f => f.fieldId)).catch(() => null);
+}
 
 export async function searchIssues(client: ReadOnlyJiraClient, args: { projectKey: string; text?: string; type?: string; openOnly?: boolean }) {
   const filters = [`project = ${jqlString(projectKey(args.projectKey))}`];

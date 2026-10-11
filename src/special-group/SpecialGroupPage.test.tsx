@@ -26,6 +26,7 @@ function fakeApi(configured = true) {
     if (url.endsWith("/config")) return ok({ configured: connected, siteUrl: SITE, defaultProjectKey: "DESK", readOnly: true });
     if (url.endsWith("/connect")) { connected = true; return ok({ connected: true, account: "Reader", projects: 1 }); }
     if (url.includes("/projects/DESK/options")) return ok(options);
+    if (url.includes("/projects/DESK/types/")) return ok({ fields: ["summary", "description", "parent", "components", "labels"].map(fieldId => ({ fieldId, name: fieldId, required: false })) });
     if (url.includes("/projects")) return ok({ projects: [project] });
     if (url.endsWith("/prompt")) return ok({ prompt: "You are the Special Group ticket assistant." });
     if (url.endsWith("/chat")) {
@@ -83,11 +84,15 @@ describe("Special Group page", () => {
     fireEvent.change(draftCard().getByLabelText("Summary"), { target: { value: "Date picker crash" } });
     fireEvent.change(draftCard().getByLabelText("Work type"), { target: { value: "10005" } });
     fireEvent.click(draftCard().getByRole("button", { name: "Web" }));
+    fireEvent.change(draftCard().getByLabelText("Priority"), { target: { value: "2" } });
+    // Priority isn't on this create screen, so it's left out of the link with a warning.
+    await draftCard().findByText(/Priority isn't on the Story create screen/);
     const href = new URL(draftCard().getByRole("link", { name: /Open in Jira/ }).getAttribute("href")!);
     expect(href.searchParams.get("summary")).toBe("Date picker crash");
     expect(href.searchParams.get("issuetype")).toBe("10005");
     expect(href.searchParams.get("parent")).toBe("DESK-12");
     expect(href.searchParams.getAll("components")).toEqual(["201"]);
+    expect(href.searchParams.has("priority")).toBe(false);
   });
 
   it("keeps separate sessions, each with its own draft", async () => {

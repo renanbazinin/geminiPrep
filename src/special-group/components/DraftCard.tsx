@@ -13,6 +13,8 @@ type Props = {
   siteUrl: string;
   projects: ProjectSummary[];
   options: ProjectOptions | null;
+  /** Field IDs on the work type's create screen, or null if unknown. */
+  screenFields: string[] | null;
   optionsLoading: boolean;
   optionsError: string;
   disabled: boolean;
@@ -27,7 +29,7 @@ function toggle(list: Named[] | undefined, item: Named): Named[] | undefined {
   return next.length ? next : undefined;
 }
 
-export function DraftCard({ draft, siteUrl, projects, options, optionsLoading, optionsError, disabled, onChange, onReloadOptions }: Props) {
+export function DraftCard({ draft, siteUrl, projects, options, screenFields, optionsLoading, optionsError, disabled, onChange, onReloadOptions }: Props) {
   const set = <K extends keyof TicketDraft>(key: K, value: TicketDraft[K]) => {
     const next = { ...draft, [key]: value };
     if (value === undefined || value === "") delete next[key];
@@ -47,7 +49,7 @@ export function DraftCard({ draft, siteUrl, projects, options, optionsLoading, o
   }
 
   const projectChoices = draft.project && !projects.some(p => p.key === draft.project!.key) ? [draft.project, ...projects] : projects;
-  const link = buildCreateLink(siteUrl, draft, options?.parentParam ?? null);
+  const link = buildCreateLink(siteUrl, draft, options?.parentParam ?? null, screenFields);
   const byId = (list: Named[], id: string) => list.find(item => item.id === id);
 
   return <section className="sg-draft" aria-label="Ticket draft">

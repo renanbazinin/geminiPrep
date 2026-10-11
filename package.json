@@ -9,7 +9,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p tsconfig.server.json",
     "start": "node dist-server/server/index.js",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "check:special-group": "tsx scripts/special-group-live-check.ts"
   },
   "dependencies": {
     "cors": "^2.8.5",

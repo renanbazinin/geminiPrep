@@ -20,6 +20,8 @@ const JIRA: Record<string, unknown> = {
   "GET /rest/api/3/project/DESK/components": [],
   "GET /rest/api/3/project/DESK/versions": [],
   "POST /rest/api/3/search/jql": { issues: [{ key: "DESK-12", fields: { summary: "Booking", status: { name: "To Do" } } }] },
+  // The Bug create screen has no priority field, like the real DESK project.
+  "GET /rest/api/3/issue/createmeta/DESK/issuetypes/10004": { fields: ["summary", "description", "reporter", "parent", "labels"].map(fieldId => ({ fieldId, name: fieldId, required: fieldId === "summary" })), total: 5 },
 };
 const modelTurn = (...parts: unknown[]) => json({ candidates: [{ content: { role: "model", parts } }] });
 
@@ -69,6 +71,10 @@ describe("runSpecialGroupChat", () => {
     const url = new URL(result.link!.url!);
     expect(url.searchParams.get("pid")).toBe("10000");
     expect(url.searchParams.get("parent")).toBe("DESK-12");
+    // Priority is in the draft but not on the Bug create screen: left out of the link, and the model is told.
+    expect(url.searchParams.has("priority")).toBe(false);
+    expect(result.link!.warnings[0]).toContain("Priority isn't on the Bug create screen");
+    expect((result.lookups[1]!.result as any).warnings[0]).toContain("Priority isn't on the Bug create screen");
 
     const calls = modelCalls(fetcher);
     expect(calls[0]!.url).toContain(":generateContent");
@@ -106,6 +112,9 @@ describe("Special Group routes", () => {
     expect((await request(server).get("/api/special-group/prompt")).body.prompt).toContain("cannot create or change anything in Jira");
     expect((await request(server).get("/api/special-group/projects")).body.projects).toEqual([{ id: "10000", key: "DESK", name: "DeskFlow" }]);
     expect((await request(server).get("/api/special-group/projects/DESK/options")).body.parentParam).toEqual({ name: "parent", mode: "parent" });
+    const screen = await request(server).get("/api/special-group/projects/DESK/types/10004/fields");
+    expect(screen.body.fields.map((f: any) => f.fieldId)).toEqual(["summary", "description", "reporter", "parent", "labels"]);
+    expect((await request(server).get("/api/special-group/projects/DESK/types/not-a-number/fields")).status).toBe(502);
   });
 
   it("rejects chat requests that try to use files or tools, and sanitizes the draft", async () => {
