@@ -63,6 +63,7 @@ Open `http://localhost:5173`. The API server runs on port 3001 and is proxied by
 - `/` — streaming chat and local conversations
 - `/settings` — provider, model, memory/storage, tools, reasoning, structured output, image, and generation controls
 - `/jira` — DeskFlow Jira space with live tickets and chat actions; see [setup and behavior](docs/guides/jira-demo.en.md)
+- `/special-group` — read-only Jira ticket assistant that drafts tickets and opens them prefilled in Jira. The general pattern (read-only Jira → prefilled create link → any chatbot) is in four short guides: [English](docs/guides/jira-ticket-links/01-read-only-access.en.md) · [Hebrew](docs/guides/jira-ticket-links/01-read-only-access.he.md)
 - `/tests` — bilingual English/Hebrew test lab index
 - `/tests/regions` — live Vertex model-by-region availability matrix
 - `/tests/cache` — Gemini 3 explicit context-cache lifecycle and cache-hit lab

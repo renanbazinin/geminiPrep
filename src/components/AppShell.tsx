@@ -8,6 +8,7 @@ import {
   Sparkles,
   Trash2,
   Ticket,
+  Users,
   X,
 } from "lucide-react";
 import { useState } from "react";
@@ -74,7 +75,7 @@ export function AppShell() {
     setManageDialog(null);
   }
 
-  const pageTitle = location.pathname === "/jira" ? "DeskFlow · Jira" : location.pathname === "/settings"
+  const pageTitle = location.pathname === "/jira" ? "DeskFlow · Jira" : location.pathname === "/special-group" ? "Special Group" : location.pathname === "/settings"
     ? "Settings"
     : location.pathname === "/tests/cache"
       ? "Cache test"
@@ -142,6 +143,9 @@ export function AppShell() {
         <nav className="sidebar-nav">
           <NavLink to="/jira" className={({ isActive }) => `sidebar-link${isActive ? " sidebar-link-active" : ""}`} onClick={() => setDrawerOpen(false)}>
             <Ticket size={18} /><span>DeskFlow · Jira</span>
+          </NavLink>
+          <NavLink to="/special-group" className={({ isActive }) => `sidebar-link${isActive ? " sidebar-link-active" : ""}`} onClick={() => setDrawerOpen(false)}>
+            <Users size={18} /><span>Special Group</span>
           </NavLink>
           <NavLink to="/tests" className={({ isActive }) => `sidebar-link${isActive ? " sidebar-link-active" : ""}`} onClick={() => setDrawerOpen(false)}>
             <FlaskConical size={18} />

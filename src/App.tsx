@@ -9,6 +9,7 @@ import { RegionsPage } from "./pages/RegionsPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { TestsPage } from "./pages/TestsPage";
 import { JiraPage } from "./pages/JiraPage";
+import { SpecialGroupPage } from "./special-group/SpecialGroupPage";
 
 export function App() {
   return (
@@ -21,6 +22,7 @@ export function App() {
                 <Route index element={<ChatPage />} />
                 <Route path="settings" element={<SettingsPage />} />
                 <Route path="jira" element={<JiraPage />} />
+                <Route path="special-group" element={<SpecialGroupPage />} />
                 <Route path="tests" element={<TestsPage />} />
                 <Route path="tests/regions" element={<RegionsPage />} />
                 <Route path="tests/cache" element={<CachePage />} />

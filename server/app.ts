@@ -2,6 +2,7 @@ import path from "node:path";
 import cors from "cors";
 import express from "express";
 import { jiraRoutes } from "./jira/routes.js";
+import { specialGroupRoutes } from "./special-group/routes.js";
 import {
   resolveDefaultRegionIds,
   resolveCacheModels,
@@ -49,6 +50,7 @@ export function createApp(options: {
   app.use(cors());
   app.use(express.json({ limit: "30mb" }));
   app.use("/api/jira", jiraRoutes({ fetchImpl: options.fetchImpl }));
+  app.use("/api/special-group", specialGroupRoutes({ fetchImpl: options.fetchImpl }));
 
   app.get("/api/health", (_req, res) => res.json({ ok: true }));
   app.get("/api/config", (_req, res) => res.json(buildPublicConfig()));
