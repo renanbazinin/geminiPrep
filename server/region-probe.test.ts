@@ -31,6 +31,7 @@ import {
 } from "./region-probe.js";
 import { getVertexAccessToken, resetVertexTokenCache } from "./vertex-auth.js";
 import { createApp } from "./app.js";
+import { PRO_MODEL } from "../shared/gemini-4.js";
 
 const PROJECT_ENV_KEYS = ["GCP_PROJECT", "GOOGLE_CLOUD_PROJECT", "GCLOUD_PROJECT", "GCP_PROJECT_ID"];
 const PROBE_ENV_KEYS = [
@@ -268,7 +269,7 @@ describe("env-driven catalogs", () => {
 
   it("uses the built-in catalogs when nothing is configured", () => {
     expect(resolveProbeRegions()).toEqual(VERTEX_REGIONS);
-    expect(resolveProbeModels()).toEqual([...VERTEX_MODELS, ...VERTEX_IMAGE_MODELS]);
+    expect(resolveProbeModels()).toEqual([...VERTEX_MODELS, PRO_MODEL, ...VERTEX_IMAGE_MODELS]);
     expect(resolveProbeModels().map((m) => m.id)).toEqual(expect.arrayContaining([
       "gemini-3.1-flash-image",
       "gemini-3.1-flash-lite-image",
@@ -293,7 +294,7 @@ describe("env-driven catalogs", () => {
     process.env.VERTEX_PROBE_MODELS = "gemini-4-pro,gemini-4-flash-image";
     process.env.VERTEX_PROBE_REGIONS = "europe-west12";
     expect(resolveProbeModels()).toEqual([
-      { id: "gemini-4-pro", label: "gemini-4-pro", family: "other" },
+      { id: "gemini-4-pro", label: "gemini-4-pro", family: "4.x" },
       { id: "gemini-4-flash-image", label: "gemini-4-flash-image", family: "image" },
     ]);
     expect(resolveProbeRegions()).toEqual([

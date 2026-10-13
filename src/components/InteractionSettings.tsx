@@ -2,12 +2,14 @@ import { useEffect, useState } from "react";
 import { MessagesSquare } from "lucide-react";
 import type { InteractionOptions } from "../../shared/contracts";
 import { IMAGE_ASPECT_RATIOS, parseInteractionOptions, usesInteractions } from "../../shared/interactions";
+import { PRO_MODEL_LABEL, chatModelFor, isGemini4Model } from "../../shared/gemini-4";
 import { useApp } from "../contexts/AppContext";
 
 export function InteractionSettings() {
   const { settings, updateSettings } = useApp();
   const options = settings.interactions;
   const vertex = settings.provider === "vertex";
+  const gemini4 = isGemini4Model(chatModelFor(settings));
   const [stopText, setStopText] = useState(options.stopSequences.join("\n"));
   useEffect(() => {
     setStopText((current) => current.split("\n").filter(Boolean).join("\n") === options.stopSequences.join("\n")
@@ -57,8 +59,10 @@ export function InteractionSettings() {
         <div className="settings-grid">
           <label className="form-field"><span>Interaction thinking level</span>
             <select value={options.thinkingLevel} onChange={(event) => set({ thinkingLevel: event.target.value as InteractionOptions["thinkingLevel"] })}>
-              {(["default", "minimal", "low", "medium", "high"] as const).map((level) => <option key={level} value={level}>{level === "default" ? "Model default" : level}</option>)}
-            </select><small>Supported levels vary by model. Model default leaves the choice to Gemini.</small>
+              {(["default", "minimal", "low", "medium", "high"] as const).map((level) => <option key={level} value={level} disabled={gemini4 && level === "minimal"}>{level === "default" ? "Model default" : level}</option>)}
+            </select><small>{gemini4
+              ? `${PRO_MODEL_LABEL} accepts low, medium, and high (its default is medium). Minimal is sent as low.`
+              : "Supported levels vary by model. Model default leaves the choice to Gemini."}</small>
           </label>
           <label className="form-field"><span>Thinking summaries</span>
             <select value={options.thinkingSummaries} onChange={(event) => set({ thinkingSummaries: event.target.value as InteractionOptions["thinkingSummaries"] })}>
@@ -70,8 +74,8 @@ export function InteractionSettings() {
             <small>Best-effort reproducibility; identical output is not guaranteed.</small>
           </label>
           <label className="form-field"><span>{vertex ? "Top P (optional)" : "Top P (beta only)"}</span>
-            <input type="number" min={0} max={1} step={0.01} disabled={!vertex && options.apiVersion !== "v1beta"} value={options.topP ?? ""} placeholder="Model default" onChange={(event) => set({ topP: event.target.value === "" ? null : Number(event.target.value) })} />
-            <small>{vertex ? "Controls the cumulative probability of tokens considered when sampling." : "Deprecated in beta; omitted with stable v1, like temperature."}</small>
+            <input type="number" min={0} max={1} step={0.01} disabled={gemini4 || (!vertex && options.apiVersion !== "v1beta")} value={options.topP ?? ""} placeholder="Model default" onChange={(event) => set({ topP: event.target.value === "" ? null : Number(event.target.value) })} />
+            <small>{gemini4 ? `${PRO_MODEL_LABEL} manages its own sampling; Top P is not sent.` : vertex ? "Controls the cumulative probability of tokens considered when sampling." : "Deprecated in beta; omitted with stable v1, like temperature."}</small>
           </label>
           <label className="form-field"><span>Stop sequences</span>
             <textarea rows={3} value={stopText} placeholder="One sequence per line" onChange={(event) => { setStopText(event.target.value); set({ stopSequences: event.target.value.split("\n").filter(Boolean) }); }} />

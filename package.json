@@ -10,7 +10,8 @@
     "start": "node dist-server/server/index.js",
     "test": "vitest run",
     "test:watch": "vitest",
-    "check:special-group": "tsx scripts/special-group-live-check.ts"
+    "check:special-group": "tsx scripts/special-group-live-check.ts",
+    "check:gemini-4": "tsx scripts/gemini-4-live-check.ts"
   },
   "dependencies": {
     "cors": "^2.8.5",

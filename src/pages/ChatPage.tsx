@@ -55,6 +55,8 @@ import {
 import { createId } from "../lib/storage";
 import { selectInteractionHistory } from "../lib/interaction-history";
 import { interactionApiVersion, usesInteractions } from "../../shared/interactions";
+import { chatModelFor, gemini4RegionProblem, isGemini4Model } from "../../shared/gemini-4";
+import { ProModelToggle } from "../components/ProModelToggle";
 
 const SUGGESTIONS = [
   "Explain how Vertex AI regional endpoints differ from the global endpoint.",
@@ -249,7 +251,7 @@ function initialDebugTrace(request: ChatStreamRequest, startedAt: string): ChatM
 function ProviderBadge() {
   const { settings } = useApp();
   const { config } = useConfig();
-  const model = settings.models[settings.provider];
+  const model = chatModelFor(settings);
   return (
     <Link className="provider-badge" to="/settings" title="Open model settings">
       <span className={`provider-dot provider-dot-${settings.provider}`} />
@@ -346,8 +348,12 @@ export function ChatPage() {
     return () => window.removeEventListener("keydown", handler);
   }, []);
 
-  const activeModel = settings.models[settings.provider];
+  const activeModel = chatModelFor(settings);
   const providerReady = config?.providers[settings.provider].ready ?? false;
+  // Interactions always runs on the global endpoint; only Generate Content uses the saved region.
+  const proRegionProblem = settings.provider === "vertex" && !usesInteractions(settings) && isGemini4Model(activeModel)
+    ? gemini4RegionProblem(settings.region)
+    : null;
   const canSend = (draft.trim().length > 0 || pendingAttachments.length > 0)
     && !running && !preparing && !processingFiles && !configLoading && Boolean(config);
 
@@ -740,6 +746,7 @@ export function ChatPage() {
     <div className="chat-page">
       {storageError ? <p className="panel-error" role="alert">{storageError}</p> : null}
       <div className="chat-topbar">
+        <ProModelToggle disabled={running || preparing} />
         <ProviderBadge />
         {usesInteractions(settings) ? (
           <div className="interaction-session">
@@ -860,6 +867,11 @@ export function ChatPage() {
         {!configLoading && config && !providerReady ? (
           <div className="composer-alert">
             {config.providers[settings.provider].status}. <Link to="/settings">Review settings</Link>
+          </div>
+        ) : null}
+        {proRegionProblem ? (
+          <div className="composer-alert" role="alert">
+            {proRegionProblem} <Link to="/settings">Open settings</Link>
           </div>
         ) : null}
         <form className="composer" onSubmit={submit}>

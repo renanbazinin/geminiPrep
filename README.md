@@ -9,11 +9,19 @@ streaming, built-in tools, and expanded settings. Select **Vertex AI → Interac
 Google Cloud project and ADC, or **Gemini Developer API → Interactions** for an API key.
 Existing provider selections and chats are preserved. See the
 [Interactions guide](docs/guides/interactions.en.md) for controls, migration, and limitations.
+The older stateless **Generate Content** API (still available as the legacy mode) is explained in a general
+guide in [English](docs/guides/generate-content.en.md) and [Hebrew](docs/guides/generate-content.he.md).
 
 Gemini 3.8 Flash is available on both providers and is the default for fresh browser settings.
 Existing model selections are preserved. If an older local environment list hides it, add
 `gemini-3.8-flash` to `VERTEX_CHAT_MODELS` (or its `VERTEX_PROBE_MODELS` fallback) and
 `GEMINI_CHAT_MODELS`, then restart the server.
+
+The **Gemini 4 · Pro** switch in the chat top bar (also in Settings) moves new turns to Gemini 4 Argon
+(`gemini-4-argon`, paid tier only) on either provider and API mode, and switches back to your saved model.
+It is always offered, even when the lists above are narrowed. On Vertex, Gemini 4 is served only from
+`global`, `us` and `eu`. See the guide in [English](docs/guides/gemini-4.en.md) or
+[Hebrew](docs/guides/gemini-4.he.md) for what changes in the API and how it was verified.
 
 Every new assistant turn also keeps a collapsible local debug trace. It records the browser API
 request, the sanitized provider request, HTTP/SSE response metadata, usage, timing, event counts,
@@ -88,3 +96,6 @@ npm run build
 ```
 
 Automated tests use mocked provider responses and do not spend Google Cloud quota.
+
+`npm run check:gemini-4` sends a few small, billable requests through every Gemini 4 chat path on each
+configured provider and reports which ones work.
