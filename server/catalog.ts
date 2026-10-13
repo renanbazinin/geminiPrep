@@ -1,5 +1,6 @@
 import type { ModelOption, RegionOption } from "../shared/contracts.js";
 import { IMAGE_MODEL_ID } from "../shared/chat-tools.js";
+import { PRO_MODEL } from "../shared/gemini-4.js";
 
 export { IMAGE_MODEL_ID };
 
@@ -97,8 +98,17 @@ export function isImageModelId(id: string): boolean {
   return id.includes("-image");
 }
 
+/**
+ * The Gemini 4 toggle must work even when an env list narrows the regular model menu, so the
+ * Pro model is appended last. Last keeps it from becoming the default for fresh settings.
+ */
+function withProModel(models: ModelOption[]): ModelOption[] {
+  return models.some((model) => model.id === PRO_MODEL.id) ? models : [...models, PRO_MODEL];
+}
+
 function modelFamily(id: string): string {
   if (isImageModelId(id)) return "image";
+  if (id.startsWith("gemini-4")) return "4.x";
   if (id.startsWith("gemini-3")) return "3.x";
   if (id.startsWith("gemini-2")) return "2.5";
   return "other";
@@ -113,7 +123,7 @@ export function resolveProbeRegions(): RegionOption[] {
 }
 
 export function resolveProbeModels(): ModelOption[] {
-  const catalog = [...VERTEX_MODELS, ...VERTEX_IMAGE_MODELS];
+  const catalog = [...VERTEX_MODELS, PRO_MODEL, ...VERTEX_IMAGE_MODELS];
   return extendCatalog(envIdList("VERTEX_PROBE_MODELS"), catalog, (id) => ({
     id,
     label: id,
@@ -123,15 +133,15 @@ export function resolveProbeModels(): ModelOption[] {
 
 export function resolveVertexChatModels(): ModelOption[] {
   const ids = envIdList("VERTEX_CHAT_MODELS") ?? envIdList("VERTEX_PROBE_MODELS");
-  return extendCatalog(ids, VERTEX_MODELS, (id) => ({ id, label: id, family: modelFamily(id) }));
+  return withProModel(extendCatalog(ids, VERTEX_MODELS, (id) => ({ id, label: id, family: modelFamily(id) })));
 }
 
 export function resolveGeminiChatModels(): ModelOption[] {
-  return extendCatalog(envIdList("GEMINI_CHAT_MODELS"), GEMINI_MODELS, (id) => ({
+  return withProModel(extendCatalog(envIdList("GEMINI_CHAT_MODELS"), GEMINI_MODELS, (id) => ({
     id,
     label: id,
     family: modelFamily(id),
-  }));
+  })));
 }
 
 export function resolveCacheModels(): ModelOption[] {

@@ -1,5 +1,6 @@
 import type { AppSettings, Conversation, PublicConfig } from "../../shared/contracts";
 import { DEFAULT_INTERACTIONS, parseInteractionOptions } from "../../shared/interactions";
+import { PRO_MODEL } from "../../shared/gemini-4";
 
 const CONVERSATIONS_KEY = "gemini-prep:conversations:v1";
 const SETTINGS_KEY = "gemini-prep:settings:v1";
@@ -24,6 +25,7 @@ export const FALLBACK_SETTINGS: AppSettings = {
   version: 1,
   provider: "gemini",
   models: { vertex: "gemini-3.8-flash", gemini: "gemini-3.8-flash" },
+  proModel: false,
   region: "global",
   systemInstruction: "",
   temperature: 1,
@@ -84,6 +86,7 @@ export function loadSettings(): AppSettings {
         ...FALLBACK_SETTINGS,
         ...parsed,
         models: { ...FALLBACK_SETTINGS.models, ...parsed.models },
+        proModel: parsed.proModel === true,
         geminiApi: parsed.geminiApi === "generateContent" ? "generateContent" : "interactions",
         vertexApi: parsed.vertexApi === "interactions" ? "interactions" : "generateContent",
         interactions: restoreInteractionSettings(parsed.interactions),
@@ -120,7 +123,10 @@ export function settingsForConfig(settings: AppSettings, config: PublicConfig): 
   const region = config.regions.some((entry) => entry.id === settings.region)
     ? settings.region
     : config.defaults.region;
-  return { ...settings, models: { vertex: vertexModel, gemini: geminiModel }, region };
+  // An older server without the Pro model would reject every turn, so the toggle turns itself off.
+  const proModel = settings.proModel
+    && config.providers[settings.provider].models.some((model) => model.id === PRO_MODEL.id);
+  return { ...settings, models: { vertex: vertexModel, gemini: geminiModel }, proModel, region };
 }
 
 export function conversationTitle(text: string): string {

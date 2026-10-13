@@ -4,6 +4,7 @@ import { normalizeImageMimeType, resolvedChatSystemInstruction } from "../../sha
 import { describeUpstreamRequest, parseSseJson, upstreamErrorMessage } from "./upstream.js";
 import { isInteractionAccessError, isInvalidInteractionReference } from "./interaction-errors.js";
 import { getVertexAccessToken } from "../vertex-auth.js";
+import { gemini4OutputTokens, gemini4ThinkingLevel, isGemini4Model } from "../../shared/gemini-4.js";
 
 type RecordValue = Record<string, unknown>;
 function record(value: unknown): RecordValue {
@@ -26,6 +27,9 @@ export function buildInteractionBody(request: ChatStreamRequest): RecordValue {
   const options = request.interactions!;
   const image = request.tool === "image";
   const vertex = request.provider === "vertex";
+  // Gemini 4 ignores sampling controls, rejects "minimal" thinking, and shares its output budget with thinking.
+  const gemini4 = isGemini4Model(request.model);
+  const thinkingLevel = gemini4 ? gemini4ThinkingLevel(options.thinkingLevel) : options.thinkingLevel;
   const tools = image ? [] : [
     ...(options.googleSearch ? [{ type: "google_search" }] : []),
     ...(options.urlContext ? [{ type: "url_context" }] : []),
@@ -40,16 +44,16 @@ export function buildInteractionBody(request: ChatStreamRequest): RecordValue {
     ...(resolvedChatSystemInstruction(request) ? { system_instruction: resolvedChatSystemInstruction(request) } : {}),
     ...(tools.length ? { tools } : {}),
     generation_config: {
-      max_output_tokens: request.maxOutputTokens,
+      max_output_tokens: gemini4 ? gemini4OutputTokens(request.maxOutputTokens) : request.maxOutputTokens,
       ...(options.seed !== null ? { seed: options.seed } : {}),
       ...(options.stopSequences.length ? { stop_sequences: options.stopSequences } : {}),
       ...(!image ? {
         thinking_summaries: options.thinkingSummaries,
-        ...(options.thinkingLevel !== "default" ? { thinking_level: options.thinkingLevel } : {}),
+        ...(thinkingLevel !== "default" ? { thinking_level: thinkingLevel } : {}),
       } : {}),
       ...(tools.length ? { tool_choice: options.toolChoice } : {}),
       // Sampling controls are deprecated in beta and absent from the stable v1 schema.
-      ...(vertex || options.apiVersion === "v1beta" ? {
+      ...(!gemini4 && (vertex || options.apiVersion === "v1beta") ? {
         temperature: request.temperature,
         ...(options.topP !== null ? { top_p: options.topP } : {}),
       } : {}),
@@ -188,6 +192,9 @@ export async function proxyInteractionStream(options: {
     if (!result.body) throw new Error("Gemini returned an empty interaction stream.");
     for await (const event of parseSseJson<RecordValue>(result.body)) {
       if (signal?.aborted) return;
+      // Read to the natural end after completion instead of cancelling: Vertex keeps the stored
+      // interaction IN_PROGRESS until its stream closes, so an immediate follow-up would be rejected.
+      if (completed) continue;
       chunkCount++;
       const type = event.event_type;
       const interaction = record(event.interaction);
@@ -251,7 +258,7 @@ export async function proxyInteractionStream(options: {
         }
         if (!interactionId && request.interactions!.store && interactionStatus === "completed") throw new Error("Gemini completed without an interaction ID.");
         completed = true;
-        break;
+        continue;
       }
       if (type === "interaction.status_update" && ["failed", "cancelled"].includes(String(event.status))) {
         throw new Error(`Gemini interaction ${event.status}.`);

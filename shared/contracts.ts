@@ -184,6 +184,8 @@ export type AppSettings = {
   version: 1;
   provider: ProviderId;
   models: Record<ProviderId, string>;
+  /** When on, chat uses the Gemini 4 Pro model instead of `models[provider]`. */
+  proModel: boolean;
   region: string;
   systemInstruction: string;
   temperature: number;

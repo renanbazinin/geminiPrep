@@ -9,6 +9,7 @@ import type {
 import type { ModelOption, RegionOption } from "../../shared/contracts.js";
 import { IMAGE_MODEL_ID, IMAGE_MODEL_REGION, isChatToolId, normalizeImageMimeType } from "../../shared/chat-tools.js";
 import { parseInteractionOptions } from "../../shared/interactions.js";
+import { gemini4RegionProblem, isGemini4Model } from "../../shared/gemini-4.js";
 
 const MAX_HISTORY_MESSAGES = 200;
 const MAX_TOTAL_CHARACTERS = 1_000_000;
@@ -102,6 +103,12 @@ export function validateChatRequest(
       fail(`cachedContent lives in ${cacheRegion}, which does not match the request region ${region}.`);
     }
     cachedContent = input.cachedContent;
+  }
+
+  if (isGemini4Model(model)) {
+    const regionProblem = region ? gemini4RegionProblem(region) : null;
+    if (regionProblem) fail(regionProblem);
+    if (cachedContent) fail("Gemini 4 does not support explicit context caches. It caches repeated prompt prefixes automatically.");
   }
 
   const systemInstruction = typeof input.systemInstruction === "string"

@@ -6,12 +6,18 @@ import { useConfig } from "../contexts/ConfigContext";
 import { forgetCache, formatRemaining, loadCaches, remainingMs } from "../lib/cache-registry";
 import { InteractionSettings } from "../components/InteractionSettings";
 import { usesInteractions } from "../../shared/interactions";
+import { GEMINI_4_MIN_OUTPUT_TOKENS, PRO_MODEL, PRO_MODEL_LABEL, gemini4RegionProblem } from "../../shared/gemini-4";
 
 export function SettingsPage() {
   const { settings, updateSettings, resetSettings, storageError } = useApp();
   const { config, loading, error, reload } = useConfig();
   const interactionMode = usesInteractions(settings);
-  const modelManagedSampling = interactionMode && settings.provider === "gemini" && settings.interactions.apiVersion === "v1";
+  const modelManagedSampling = settings.proModel
+    || (interactionMode && settings.provider === "gemini" && settings.interactions.apiVersion === "v1");
+  const proModelAvailable = config?.providers[settings.provider].models.some((model) => model.id === PRO_MODEL.id) ?? false;
+  const proRegionProblem = settings.proModel && settings.provider === "vertex" && !interactionMode
+    ? gemini4RegionProblem(settings.region)
+    : null;
 
   function selectProvider(provider: ProviderId) {
     updateSettings({ provider });
@@ -94,12 +100,16 @@ export function SettingsPage() {
               onChange={(event) => updateSettings({
                 models: { ...settings.models, [settings.provider]: event.target.value },
               })}
-              disabled={!config}
+              disabled={!config || settings.proModel}
             >
-              {(config?.providers[settings.provider].models ?? []).map((model) => (
-                <option key={model.id} value={model.id}>{model.label} · {model.id}</option>
-              ))}
+              {/* The Pro model has its own toggle below rather than a menu entry. */}
+              {(config?.providers[settings.provider].models ?? [])
+                .filter((model) => model.id !== PRO_MODEL.id || model.id === settings.models[settings.provider])
+                .map((model) => (
+                  <option key={model.id} value={model.id}>{model.label} · {model.id}</option>
+                ))}
             </select>
+            {settings.proModel ? <small>{PRO_MODEL_LABEL} is on. Turn it off to use this model again.</small> : null}
           </label>
 
           {settings.provider === "vertex" && interactionMode ? (
@@ -121,6 +131,30 @@ export function SettingsPage() {
               <small>The Developer API does not expose a Vertex-style region selector.</small>
             </div>
           )}
+
+          <label className="toggle-field">
+            <input
+              type="checkbox"
+              checked={settings.proModel}
+              disabled={!proModelAvailable}
+              onChange={(event) => updateSettings({ proModel: event.target.checked })}
+            />
+            <span>
+              <strong>Use {PRO_MODEL_LABEL} (Pro model)</strong>
+              <small>
+                Sends <code>{PRO_MODEL.id}</code> instead of the model above, on both API modes. Paid tier only.
+                Thinking counts toward the output limit, so at least {GEMINI_4_MIN_OUTPUT_TOKENS.toLocaleString()} output
+                tokens are requested. Temperature and Top P are not sent, and minimal thinking runs as low.
+                {settings.provider === "vertex" ? " Vertex serves it from global, us, and eu." : ""}
+              </small>
+            </span>
+          </label>
+          {proRegionProblem ? (
+            <div className="settings-warning" role="alert">
+              <AlertTriangle size={16} />
+              <span>{proRegionProblem}</span>
+            </div>
+          ) : null}
 
           <label className="form-field form-field-wide">
             <span>System instruction</span>
@@ -145,7 +179,9 @@ export function SettingsPage() {
               disabled={modelManagedSampling}
               onChange={(event) => updateSettings({ temperature: Number(event.target.value) })}
             />
-            <small>{modelManagedSampling ? "Stable Interactions v1 uses model-managed sampling; temperature is not sent." : "Lower is more consistent; higher is more varied."}</small>
+            <small>{settings.proModel
+              ? `${PRO_MODEL_LABEL} manages its own sampling; temperature is not sent.`
+              : modelManagedSampling ? "Stable Interactions v1 uses model-managed sampling; temperature is not sent." : "Lower is more consistent; higher is more varied."}</small>
           </label>
 
           <label className="form-field">
@@ -161,7 +197,9 @@ export function SettingsPage() {
                 if (Number.isFinite(value)) updateSettings({ maxOutputTokens: Math.min(65_536, Math.max(1, Math.round(value))) });
               }}
             />
-            <small>Provider/model limits may be lower than this local guardrail.</small>
+            <small>{settings.proModel && settings.maxOutputTokens < GEMINI_4_MIN_OUTPUT_TOKENS
+              ? `${PRO_MODEL_LABEL} raises this to ${GEMINI_4_MIN_OUTPUT_TOKENS.toLocaleString()} so thinking leaves room for the answer.`
+              : "Provider/model limits may be lower than this local guardrail."}</small>
           </label>
 
           {!interactionMode ? <label className="form-field">

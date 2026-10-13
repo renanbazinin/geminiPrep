@@ -49,6 +49,34 @@ it("continues the same project and checks expired IDs on the same authenticated 
   expect(result.text).toContain('"code":"interaction_reference_invalid"');
 });
 
+it("reads the stream to its end after completion, because Vertex stores the turn only once it closes", async () => {
+  // Cancelling at interaction.completed left the stored turn IN_PROGRESS, so an instant follow-up got
+  // "Previous interaction ... is in an invalid state" (seen live on 2026-10-13 with 3.8 Flash and Gemini 4).
+  const encoder = new TextEncoder();
+  const chunks = [
+    { event_type: "interaction.created", interaction: { id: "vertex-turn", status: "in_progress" } },
+    { event_type: "step.start", index: 0, step: { type: "model_output" } },
+    { event_type: "step.delta", index: 0, delta: { type: "text", text: "Hello" } },
+    { event_type: "interaction.completed", interaction: { id: "vertex-turn", status: "completed" } },
+    { event_type: "step.delta", index: 0, delta: { type: "text", text: " ignored after completion" } },
+  ].map((event) => encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+  let cancelled = false;
+  const upstream = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      const next = chunks.shift();
+      if (next) controller.enqueue(next);
+      else controller.close();
+    },
+    cancel() { cancelled = true; },
+  });
+  const provider = vi.fn<typeof fetch>().mockResolvedValue(new Response(upstream));
+  const result = await request(createApp({ fetchImpl: provider })).post("/api/chat/stream").send(body());
+  expect(cancelled).toBe(false);
+  expect(chunks).toHaveLength(0);
+  expect(result.text).toContain('"interactionId":"vertex-turn"');
+  expect(result.text).not.toContain("ignored after completion");
+});
+
 it.each([
   { interactionProject: "other-project" },
   { previousInteractionId: "old", interactionProject: undefined },

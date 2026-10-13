@@ -2,6 +2,7 @@ import type { ChatStreamImageData, ChatStreamRequest, DebugHttpExchange } from "
 import { compactDebugValue } from "../../shared/debug.js";
 import { chatFunctionDeclarations, normalizeImageMimeType, resolvedChatSystemInstruction } from "../../shared/chat-tools.js";
 import { vertexGenerateContentUrl } from "../region-probe.js";
+import { gemini4OutputTokens, isGemini4Model } from "../../shared/gemini-4.js";
 
 type UpstreamInlineData = {
   mimeType?: unknown;
@@ -54,6 +55,7 @@ export function buildGenerateContentBody(request: ChatStreamRequest): Record<str
   const systemInstruction = resolvedChatSystemInstruction(request);
   const autoRoute = !request.tool;
   const cachedContent = autoRoute ? undefined : request.cachedContent;
+  const gemini4 = isGemini4Model(request.model);
   return {
     contents: request.messages.map((message) => ({
       role: message.role === "assistant" ? "model" : "user",
@@ -71,8 +73,9 @@ export function buildGenerateContentBody(request: ChatStreamRequest): Record<str
         }
       : {}),
     generationConfig: {
-      temperature: request.temperature,
-      maxOutputTokens: request.maxOutputTokens,
+      // Gemini 4 ignores temperature and shares its output budget with thinking.
+      ...(gemini4 ? {} : { temperature: request.temperature }),
+      maxOutputTokens: gemini4 ? gemini4OutputTokens(request.maxOutputTokens) : request.maxOutputTokens,
       ...(request.thinkingLevel ? { thinkingConfig: { thinkingLevel: request.thinkingLevel } } : {}),
       ...(request.tool === "image" ? { responseModalities: ["TEXT", "IMAGE"] } : {}),
     },
