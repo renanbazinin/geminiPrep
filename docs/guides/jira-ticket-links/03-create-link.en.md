@@ -94,4 +94,6 @@ The `+` replacement is safe: `URLSearchParams` writes a real `+` as `%2B`, so ev
 - **Not every parameter is documented.** Atlassian documents `pid`, `issuetype`, `summary`, and `description`. Check the rest once on your instance: build a full link, open it, compare each field, and close the form without creating.
 - **The parent can't always be prefilled.** If neither `parent` nor an Epic Link field applies, leave it out and tell the user which epic to pick on the screen.
 
+Other ways to open a prefilled create form (service desk portal links, Forge `CreateIssueModal`, Issue Collector) are compared in the [appendix](appendix-create-entry-points.en.md).
+
 Next: [4 · Chatbot integration →](04-chatbot-integration.en.md)

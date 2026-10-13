@@ -94,4 +94,6 @@ export function buildCreateLink(site: string, d: Draft, parentParam: string | nu
 - **לא כל הפרמטרים מתועדים.** Atlassian מתעדת את `pid`,‏ `issuetype`,‏ `summary` ו־`description`. את השאר בדקו פעם אחת במופע שלכם: בנו קישור מלא, פתחו אותו, השוו כל שדה, וסגרו את הטופס בלי ליצור.
 - **לא תמיד אפשר למלא מראש את ההורה (parent).** אם לא `parent` ולא שדה Epic Link רלוונטיים, השמיטו אותו ואמרו למשתמש איזה Epic לבחור במסך.
 
+דרכים נוספות לפתוח טופס יצירה ממולא מראש (קישורי פורטל של service desk,‏ Forge `CreateIssueModal`,‏ Issue Collector) מושוות ב[נספח](appendix-create-entry-points.he.md).
+
 הבא: [4 · שילוב בצ׳אטבוט ←](04-chatbot-integration.he.md)
