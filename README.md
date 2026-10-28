@@ -11,6 +11,9 @@ Existing provider selections and chats are preserved. See the
 [Interactions guide](docs/guides/interactions.en.md) for controls, migration, and limitations.
 The older stateless **Generate Content** API (still available as the legacy mode) is explained in a general
 guide in [English](docs/guides/generate-content.en.md) and [Hebrew](docs/guides/generate-content.he.md).
+Common pitfalls when moving an app from Generate Content to Interactions (tool mapping, inheritance,
+and why an app gets slower than Postman) are in [English](docs/guides/interactions-migration-pitfalls.en.md)
+and [Hebrew](docs/guides/interactions-migration-pitfalls.he.md); `npm run check:interactions-tools` re-checks them live.
 
 Gemini 3.8 Flash is available on both providers and is the default for fresh browser settings.
 Existing model selections are preserved. If an older local environment list hides it, add
