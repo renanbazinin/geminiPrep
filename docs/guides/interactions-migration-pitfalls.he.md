@@ -8,10 +8,11 @@
 
 - המיפוי שדה אחר שדה, עם עמודה שאומרת מה לשנות;
 - הטעויות בכלים ובקריאות לפונקציות ששוברות מעבר או מוסיפות סבבים;
+- איך שולחים קבצים ומה קורה איתם, בעיקר קבצים inline;
 - הסיבות שאפליקציה איטית יותר מאותן קריאות שנשלחות ידנית מ־Postman.
 
 כל מה שמסומן כ״נבדק״ נבדק בקריאות אמיתיות ב־2026-10-28 עם `gemini-3.8-flash`, גם ב־Gemini Developer
-API ‏(`v1`) וגם ב־Vertex AI ‏(`v1beta1`, ‏`locations/global`). ראו [§8](#8-איך-זה-נבדק).
+API ‏(`v1`) וגם ב־Vertex AI ‏(`v1beta1`, ‏`locations/global`). ראו [§9](#9-איך-זה-נבדק).
 
 ---
 
@@ -22,6 +23,8 @@ API ‏(`v1`) וגם ב־Vertex AI ‏(`v1beta1`, ‏`locations/global`). ראו
 | Endpoint | `POST …/models/{model}:generateContent`, או `:streamGenerateContent?alt=sse` | `POST …/interactions` (ב־Developer API ‏`v1`; ב־Vertex ‏`v1beta1` ב־`locations/global`) | URL חדש. המודל עובר לגוף הבקשה כ־`model`. סטרימינג הופך ל־`stream: true` |
 | השיחה | כל ההיסטוריה ב־`contents`, בכל בקשה | `previous_interaction_id` ורק הקלט החדש | כשמשרשרים, מפסיקים לשלוח את ההיסטוריה |
 | קלט | `contents: [{ role, parts: [{ text }] }]` | `input: "text"`, או `input: [{ type: "user_input", content: [{ type: "text", text }] }]` | התפקידים הופכים לצעדים עם סוג (`user_input`, ‏`model_output`) |
+| קבצים, inline | `parts: [{ inlineData: { mimeType, data } }]`, נשלחים שוב בכל תור | `{ type: "image" \| "document", mime_type, data }` בתוך צעד `user_input`, נשלחים פעם אחת | שולחים כל קובץ פעם אחת ושומרים עותק משלכם. ראו [§4](#4-קבצים) |
+| קבצים שהועלו | `parts: [{ fileData: { fileUri, mimeType } }]` | `{ type: "document", uri, mime_type }` | השרשור שומר רק את הקישור, והוא פג. ראו [§4.6](#46-קבצים-שהועלו-files-api-שוברים-שרשורים) |
 | הנחיית מערכת | `systemInstruction: { parts: [{ text }] }` | `system_instruction: "…"` | מחרוזת פשוטה. **שולחים אותה בכל בקשה** |
 | הגדרות | `generationConfig: { thinkingConfig: { thinkingLevel }, stopSequences, maxOutputTokens }` | `generation_config: { thinking_level, stop_sequences, max_output_tokens }` | snake_case, ורמת החשיבה שטוחה. **שולחים אותן בכל בקשה** |
 | פלט JSON | `generationConfig: { responseMimeType, responseSchema }` | `response_format: { type: "text", mime_type: "application/json", schema }` ברמה העליונה | מוציאים מההגדרות. השדה הישן מתקופת ה־beta, ‏`response_mime_type`, נדחה ב־`v1` |
@@ -37,7 +40,7 @@ API ‏(`v1`) וגם ב־Vertex AI ‏(`v1beta1`, ‏`locations/global`). ראו
 | קריאה בסטרימינג | חלק ה־`functionCall` מגיע שלם | `step.start` נותן `id` ו־`name` (עם `arguments` ריק), ואז `step.delta` מסוג `arguments_delta` נותן את `arguments` **כמחרוזת JSON** | מחברים את המחרוזת ואז מריצים עליה `JSON.parse` |
 | סוף הסטרים | הסטרים נגמר | `interaction.completed` (גם כש־`status` הוא `requires_action`), ואז `[DONE]`. באירוע האחרון אין צעדים | בונים את הקריאה מאירועי הצעדים, לא מהאירוע האחרון |
 | טקסט התשובה | `response.text`, או `candidates[0].content.parts` | צעדי `model_output` (ב־SDK יש גם `output_text`) | מחברים את הטקסט של כל צעדי `model_output`: ‏`output_text` מדלג על טקסט שמגיע לפני צעד של כלי |
-| שימוש בטוקנים | `usageMetadata.promptTokenCount`, `thoughtsTokenCount` | `usage.total_input_tokens`, `usage.total_thought_tokens`; בסטרימינג רק ב־`interaction.completed`. בתור משורשר ה־Developer API סופר ב־`total_input_tokens` רק את הקלט החדש, ואת ההקשר המלא ב־`initial_input_tokens`; ‏Vertex שם את ההקשר המלא ב־`total_input_tokens` | משנים את שמות המדדים, קוראים את הסטרים עד הסוף כדי לקבל אותם, ולא משווים ספירות טוקנים בין ספקים |
+| שימוש בטוקנים | `usageMetadata.promptTokenCount`, `thoughtsTokenCount` | `usage.total_input_tokens`, `usage.total_thought_tokens`; בסטרימינג רק ב־`interaction.completed`. בתור משורשר Vertex שם את ההקשר המלא ב־`total_input_tokens`. ב־Developer API הוא תמיד ב־`initial_input_tokens`; ‏`total_input_tokens` שלו כלל רק את הקלט החדש בשרשור של טקסט בלבד, אבל את הכול ברגע שבהיסטוריה היה קובץ | משנים את שמות המדדים, קוראים את הסטרים עד הסוף כדי לקבל אותם, ולא משווים ספירות טוקנים בין ספקים |
 | קריאה אוטומטית לפונקציות (Python SDK) | קיימת | עדיין לא קיימת | כותבים בעצמכם את הלולאה: קריאה ← הרצה ← תוצאה |
 | שרתי MCP מרוחקים | — | עדיין לא ל־Gemini 3 | קוראים ל־MCP מהקוד שלכם כמו לפונקציות רגילות |
 
@@ -99,8 +102,8 @@ for (let round = 0; it.status === "requires_action" && round < 5; round++) {
 7. **משאירים `tool_choice: "any"` דלוק.** הוא מכריח קריאה אפילו ל״תגיד שלום״. אם הדלקתם אותו לסבב הראשון,
    החזירו ל־`auto` כששולחים את התוצאות.
 8. **סומכים על `tool_choice: "none"`.** כשהכלים עדיין מצורפים והפרומפט מבקש להשתמש בכלי, הבקשה נכשלה
-   ב־HTTP 400 ‏`malformed_tool_call` (״Model generated invalid JSON syntax…״) ב־2 מתוך 3 ניסיונות בשני
-   הספקים: המודל ניסה לקרוא בכל זאת. תפסו את השגיאה ונסו שוב פעם אחת. כדי באמת לכבות כלים ב־Developer API,
+   ב־HTTP 400 ‏`malformed_tool_call` (״Model generated invalid JSON syntax…״) ברוב הניסיונות בשני הספקים
+   (2 או 3 מכל 3, לאורך כמה הרצות): המודל ניסה לקרוא בכל זאת. תפסו את השגיאה ונסו שוב פעם אחת. כדי באמת לכבות כלים ב־Developer API,
    השמיטו אותם מהבקשה.
 9. **שולחים תוצאה כמחרוזת לבד.** ב־Vertex הבקשה הצליחה, אבל המודל ענה שהכלי לא החזיר נתונים. שלחו
    אובייקט או רשימת חלקי תוכן.
@@ -116,7 +119,100 @@ for (let round = 0; it.status === "requires_action" && round < 5; round++) {
 
 ---
 
-## 4. למה האפליקציה איטית יותר מ־Postman
+## 4. קבצים
+
+רוב אפליקציות הצ׳אט שולחות קבצים מצורפים **inline**: הבייטים של הקובץ, בקידוד base64, בתוך הבקשה. הסעיף
+הזה עוסק בעיקר בזה. כל מה שכאן נבדק בשני הספקים, אלא אם כתוב אחרת.
+
+### 4.1 שליחת קובץ inline
+
+```json
+{
+  "model": "gemini-3.8-flash",
+  "input": [{
+    "type": "user_input",
+    "content": [
+      { "type": "document", "mime_type": "application/pdf", "data": "<base64>" },
+      { "type": "image", "mime_type": "image/png", "data": "<base64>" },
+      { "type": "text", "text": "Compare the invoice with the photo." }
+    ]
+  }]
+}
+```
+
+- **עוטפים את התוכן בצעד `user_input`.** ב־Developer API ‏`v1`, מערך שטוח `input: [image, text]` (הצורה
+  שרוב הדוגמאות של ה־beta משתמשות בה) נכשל עם
+  `The value 'text' is not supported for 'input[1].type' in v1, it is available in v1beta.`
+  ‏Vertex ‏`v1beta1` וה־Developer API ‏`v1beta` מקבלים את שתי הצורות.
+- **‏`data` הוא base64 נקי.** התוצאה של `FileReader.readAsDataURL()` בדפדפן מתחילה ב־
+  `data:image/png;base64,`, ושליחה שלה נכשלת עם `Expected string, corrupt base64`. מוחקים הכול עד הפסיק.
+- **תמיד שולחים `mime_type`.** ה־Developer API ניחש אותו ל־PNG; ‏Vertex דחה את הבקשה
+  (`Missing/unsupported mime_type in image content.`).
+- **שמים את השאלה אחרי הקבצים**, כמו שהמדריך של Google למסמכים ממליץ.
+- **מגבלות** (מהתיעוד): ‏100 MB לבקשה, ו־50 MB או 1,000 עמודים ל־PDF. ‏base64 מגדיל קובץ בערך בשליש, אז
+  קובץ של 75 MB כבר עובר את מגבלת הבקשה.
+
+### 4.2 אילו קבצים עובדים
+
+| קובץ | Developer API ‏`v1` | Vertex ‏`v1beta1` | איך המודל קורא אותו |
+| --- | --- | --- | --- |
+| PDF ‏(`type: "document"`) | ✅ | ✅ | כתמונות עמוד ועוד טקסט: בערך 518 טוקנים לעמוד בבדיקה, נספרים תחת `image` |
+| PNG, ‏JPEG ‏(`type: "image"`) | ✅ | ✅ | ‏1,089 טוקנים לתמונה קטנה ברזולוציית ברירת המחדל |
+| `text/plain`, `text/markdown`, `text/csv`, `text/html` ‏(`type: "document"`) | ✅ | ✅ | כטקסט פשוט: העיצוב ותגי ה־HTML הולכים לאיבוד |
+| `application/json` ‏(`type: "document"`) | ✅ | ❌ `mimeType … application/json, which is not supported` | שולחים אותו כ־`text/plain` או כפריט טקסט |
+| DOCX, ‏PPTX, ‏XLSX | ❌ | ❌ `Request contains an invalid argument.` | ממירים ל־PDF, או מחלצים את הטקסט קודם |
+
+לפי התיעוד, אודיו ווידאו משתמשים באותו מבנה פריט (`type: "audio"`, ‏`type: "video"`); הם לא נבדקו כאן.
+
+### 4.3 מה קורה אחרי התור הראשון
+
+- **נשלח פעם אחת, נשאר בשרשור.** תורות 2 ו־3, שנשלחו עם `previous_interaction_id` ובלי קבצים, עדיין קראו
+  את ה־PDF ואת התמונה. ‏interaction חדש לא ראה אותם.
+- **נקרא מחדש בכל תור.** הטוקנים של הקובץ נספרים שוב בכל תור משורשר: ‏PDF של 12 עמודים הוסיף 6,216 טוקני
+  קלט לכל אחד מארבעה תורות. ה־implicit caching הוריד חלק מזה רק לפעמים (4,136 טוקנים בתור אחד, אפס
+  בשניים הבאים). קבצים inline זולים לשליחה, לא לשמירה.
+- **נשמר אצל Google.** ‏GET על ה־interaction מחזיר את הבייטים ב־base64. הם נשארים עד שה־interaction פג
+  (Developer API: ‏55 יום בתשלום, יום אחד בחינם; ‏Vertex preview: ‏7 ימים) או עד שמוחקים אותו ב־DELETE. מחיקת
+  הצ׳אט באפליקציה שלכם לא מוחקת את העותק של Google.
+- **נעלם אחרי DELETE או תפוגה.** המשך של שרשור שנמחק נכשל עם `404 Requested entity was not found.`
+- **גודל ההעלאה כמעט לא שינה.** בבדיקה אחת לכל ספק, בחיבור מהיר, שליחה חוזרת של תמונה של 5 MB עם התור הבא
+  (3.4–4.0 שניות) לא הייתה איטית יותר משרשור בלעדיה (6.2–7.6 שניות). הזמן של המודל עצמו שולט. גודל ההעלאה
+  חשוב בחיבורים איטיים ובגלל מגבלת ה־100 MB.
+
+### 4.4 מתי צריך לשלוח שוב את כל הקבצים
+
+קבצים inline חיים רק בתוך השרשור. כשאי אפשר להשתמש בשרשור, צריך לשלוח את כולם שוב מהעותק שלכם:
+
+- ה־interaction פג או נמחק;
+- האפליקציה החליפה מודל או ספק, או בונה מחדש אחרי תור שנעצר או נכשל;
+- ‏`store: false`, שבו כל בקשה נושאת את כל ההיסטוריה.
+
+שמרו עותק משלכם של כל קובץ (המאגר הזה שומר אותם ב־IndexedDB), ושלחו תמונות שנוצרו בחזרה כתוכן
+`model_output`. בנייה מחדש שמה את כל הקבצים של השיחה בבקשה אחת, ולכן צ׳אט ארוך יכול לעבור את מגבלת
+ה־100 MB גם אם כל תור היה קטן. בדקו את הסכום לפני הבנייה, וספרו למשתמש אם צריך לוותר על קבצים ישנים.
+
+### 4.5 איך להוזיל קבצים
+
+- **רזולוציית תמונה.** שדה `resolution` לכל פריט שינה את טוקני התמונה רק ב־Developer API: ‏`low` ‏256,
+  ‏`medium` ‏529, ‏`high` וברירת המחדל 1,089. ‏Vertex קיבל את השדה והתעלם ממנו. במסמכי PDF שני הספקים דחו
+  אותו (`Unknown parameter 'resolution'`), למרות שהתיעוד מציין אותו גם ל־PDF.
+- **מצרפים קובץ פעם אחת.** הוא כבר בשרשור; צירוף חוזר בתור מאוחר יותר מוסיף עותק שני.
+- **מחלצים את הטקסט כשהעיצוב לא חשוב.** שורת טקסט אחת כמסמך עלתה בערך 20 טוקנים; אותה שורה כ־PDF של עמוד
+  אחד עלתה בערך 518.
+
+### 4.6 קבצים שהועלו (Files API) שוברים שרשורים
+
+`{ type: "document", uri, mime_type }` שומר בשרשור רק קישור, והעלאות ל־Files API פגות אחרי 48 שעות. אחרי
+שהקובץ שהועלה נמחק (כמו בתפוגה), כל תור מאוחר יותר בשרשור נכשל עם
+`403 You do not have permission to access the File … or it may not exist.`, גם תורות שלא הזכירו את הקובץ.
+
+ב־generateContent ההיסטוריה שלכם, אז אפשר להעלות שוב ולהחליף את הקישור. ב־Interactions הקישור קבוע בעותק
+של Google, ולכן צריך להתחיל שרשור חדש עם העלאה חדשה. לקבצים מצורפים בצ׳אט, ‏inline הוא ברירת המחדל הבטוחה
+יותר. משתמשים בהעלאות לקבצים מעל מגבלת ה־inline, ועוקבים אחרי התפוגה שלהם.
+
+---
+
+## 5. למה האפליקציה איטית יותר מ־Postman
 
 ‏Postman שולח בדרך כלל בקשה אחת קטנה עם חיבור חם. אפליקציה מוסיפה מצב, הגדרות, שרת וממשק.
 
@@ -159,19 +255,19 @@ for (let round = 0; it.status === "requires_action" && round < 5; round++) {
 
 ---
 
-## 5. למה התור הראשון בצ׳אט חדש איטי
+## 6. למה התור הראשון בצ׳אט חדש איטי
 
-- טוקן התחברות קר, חיבור קר, ואולי גם מופע שרת קר (§4, מלכודות 7 ו־8).
+- טוקן התחברות קר, חיבור קר, ואולי גם מופע שרת קר (§5, מלכודות 7 ו־8).
 - עבודה שהאפליקציה עושה רק לצ׳אט חדש וממתינה לה לפני הקריאה למודל: יצירת סשן, טעינת נתוני משתמש,
   שליפת מידע, או קריאה נוספת למודל שכותבת כותרת לצ׳אט.
 - הפרומפט הכבד ביותר: הנחיית המערכת המלאה, הגדרות הכלים והקבצים המצורפים, בלי שום דבר שכבר נשמר.
   שימו את החלק הקבוע של הפרומפט בהתחלה ואת הנתונים של הסשן (שמות, תאריכים, מזהים) בסוף, כדי שההתחלה
   החוזרת תוכל להישמר בקאש.
-- חשיבה גבוהה עם מסך ריק (§4, מלכודת 9).
+- חשיבה גבוהה עם מסך ריק (§5, מלכודת 9).
 
 ---
 
-## 6. רשימת בדיקה למעבר
+## 7. רשימת בדיקה למעבר
 
 - [ ] ‏URL חדש, ‏`model` בגוף הבקשה, ‏`stream: true`.
 - [ ] הכלים שוטחו ל־`{ type: "function", … }`; שמות הכלים המובנים שונו ל־`{ type: "…" }`.
@@ -182,6 +278,10 @@ for (let round = 0; it.status === "requires_action" && round < 5; round++) {
 - [ ] התוצאות מותאמות לפי `call_id`; כל התוצאות המקבילות חוזרות בבקשה אחת.
 - [ ] התוצאות נשלחות כאובייקט או כרשימת חלקי תוכן, אף פעם לא כמחרוזת לבד.
 - [ ] על 400 מסוג `malformed_tool_call` מנסים שוב פעם אחת.
+- [ ] קבצים inline בתוך צעד `user_input`, כ־base64 נקי (בלי קידומת `data:`), ותמיד עם `mime_type`.
+- [ ] קבצי Office מומרים ל־PDF או לטקסט; ‏JSON נשלח כטקסט ב־Vertex.
+- [ ] עותק מקומי של כל קובץ לבנייה מחדש של שרשור, והסכום נבדק מול מגבלת ה־100 MB.
+- [ ] העלאות ל־Files API נבדקות מול תפוגת 48 השעות, או שלא משתמשים בהן לקבצים מצורפים בצ׳אט.
 - [ ] מחרוזות `arguments_delta` מהסטרים מחוברות ורק אז מפוענחות.
 - [ ] הממשק משתחרר ב־`interaction.completed`; מזהה ה־interaction נשמר גם אם המשתמש עוצר אחר כך.
 - [ ] יש מגבלת סבבים ללולאת הכלים.
@@ -189,7 +289,7 @@ for (let round = 0; it.status === "requires_action" && round < 5; round++) {
 
 ---
 
-## 7. מה לא נבדק בקריאות אמיתיות, או לא יציב
+## 8. מה לא נבדק בקריאות אמיתיות, או לא יציב
 
 - התמיכה בקריאה אוטומטית לפונקציות וב־MCP מרוחק לקוחה מהתיעוד, לא מבדיקות.
 - מה המודל עושה אחרי תוצאות חלקיות (§3, מלכודת 4) וכמה פעמים `tool_choice: "none"` נכשל (מלכודת 8)
@@ -203,10 +303,14 @@ for (let round = 0; it.status === "requires_action" && round < 5; round++) {
 - תקופות השמירה במלכודת 5 לקוחות מתיעוד: הנתונים של Developer API מסקירת Interactions של Google
   ‏(2026-10-28), והנתון של Vertex מ[מדריך ה־Interactions](interactions.en.md) של המאגר הזה.
 - ההתנהגות של `output_text` ב־SDK (§1) לקוחה ממדריך המעבר של Google; הבדיקה קוראת ל־REST בלבד.
+- קבצי אודיו, וידאו, ‏Cloud Storage ו־URL חיצוני לא נבדקו. המגבלות של 100 MB, ‏50 MB ו־1,000 עמודים ב־§4
+  לקוחות מהתיעוד של Google.
+- המספרים של `resolution`, של ה־caching ושל ההעלאה של 5 MB ב־§4 מגיעים מבדיקות חד־פעמיות ב־2026-10-28,
+  לא מבדיקת ה־live.
 
 ---
 
-## 8. איך זה נבדק
+## 9. איך זה נבדק
 
 הריצו `npm run check:interactions-tools` (או הוסיפו `-- gemini` / ‏`-- vertex`). הסקריפט קורא ל־Google
 ישירות, עם בקשות קטנות, חשיבה נמוכה ו־`gemini-3.8-flash` (אפשר לשנות עם `CHECK_MODEL`). הוא בודק:
@@ -220,12 +324,14 @@ for (let round = 0; it.status === "requires_action" && round < 5; round++) {
 - את `store: false` עם צעד ה־`thought` ובלעדיו;
 - כל שגיאות המבנה הישן ב־§2;
 - פלט JSON עם `response_format`, וסוגי סכמה באותיות גדולות;
-- את `google_search` ואת מבנה אירועי הסטרימינג.
+- את `google_search` ואת מבנה אירועי הסטרימינג;
+- קבצים inline: עטיפת ה־`user_input`, קבצים שנשארים ונספרים שוב בין תורות, ‏GET ו־DELETE, שגיאות הקידומת
+  `data:` וה־`mime_type`, אילו סוגי מסמכים עובדים, ושרשור שנשבר בגלל העלאה ל־Files API שנמחקה.
 
 ב־2026-10-28 הוא עבר גם ב־Gemini Developer API ‏(`v1`) וגם ב־Vertex AI ‏(`v1beta1`, ‏global); בדיקה אחת
 של Vertex עברה רק בניסיון חוזר, אחרי שגיאת רשת.
 
-מספרי המהירות ב־§4 מגיעים מסקירת ביצועים של המאגר הזה באותו יום: ‏Node 22.18 על Windows, מול
+מספרי המהירות ב־§5 מגיעים מסקירת ביצועים של המאגר הזה באותו יום: ‏Node 22.18 על Windows, מול
 `aiplatform.googleapis.com` ו־`generativelanguage.googleapis.com`.
 
 ## מקורות רשמיים (נבדקו 2026-10-28)

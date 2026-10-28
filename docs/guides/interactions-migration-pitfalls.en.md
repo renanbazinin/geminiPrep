@@ -8,10 +8,11 @@ It covers three things:
 
 - the field-by-field mapping, with a column that says what to change;
 - the tool and function-calling mistakes that break a migration or add extra rounds;
+- how files are sent and kept, especially inline files;
 - the reasons an app gets slower than the same calls made by hand in Postman.
 
 Everything marked as tested was checked live on 2026-10-28 with `gemini-3.8-flash` on the Gemini
-Developer API (`v1`) and on Vertex AI (`v1beta1`, `locations/global`). See [§8](#8-how-this-was-verified).
+Developer API (`v1`) and on Vertex AI (`v1beta1`, `locations/global`). See [§9](#9-how-this-was-verified).
 
 ---
 
@@ -22,6 +23,8 @@ Developer API (`v1`) and on Vertex AI (`v1beta1`, `locations/global`). See [§8]
 | Endpoint | `POST …/models/{model}:generateContent`, or `:streamGenerateContent?alt=sse` | `POST …/interactions` (Developer API `v1`; Vertex `v1beta1` in `locations/global`) | New URL. The model moves into the body as `model`. Streaming becomes `stream: true` |
 | Conversation | The whole history in `contents`, every request | `previous_interaction_id` plus only the new input | Stop resending history when you chain |
 | Input | `contents: [{ role, parts: [{ text }] }]` | `input: "text"`, or `input: [{ type: "user_input", content: [{ type: "text", text }] }]` | Roles become typed steps (`user_input`, `model_output`) |
+| Files, inline | `parts: [{ inlineData: { mimeType, data } }]`, sent again on every turn | `{ type: "image" \| "document", mime_type, data }` inside a `user_input` step, sent once | Send each file once; keep your own copy. See [§4](#4-files) |
+| Files, uploaded | `parts: [{ fileData: { fileUri, mimeType } }]` | `{ type: "document", uri, mime_type }` | The chain keeps only the link, which expires. See [§4.6](#46-uploaded-files-files-api-break-chains) |
 | System prompt | `systemInstruction: { parts: [{ text }] }` | `system_instruction: "…"` | A plain string. **Send it on every request** |
 | Settings | `generationConfig: { thinkingConfig: { thinkingLevel }, stopSequences, maxOutputTokens }` | `generation_config: { thinking_level, stop_sequences, max_output_tokens }` | snake_case, thinking level is flat. **Send it on every request** |
 | JSON output | `generationConfig: { responseMimeType, responseSchema }` | `response_format: { type: "text", mime_type: "application/json", schema }` at the top level | Move it out of the settings. The beta-era `response_mime_type` is rejected on `v1` |
@@ -37,7 +40,7 @@ Developer API (`v1`) and on Vertex AI (`v1beta1`, `locations/global`). See [§8]
 | Streaming a call | The `functionCall` part arrives whole | `step.start` gives `id` and `name` (with empty `arguments`), then `step.delta` of type `arguments_delta` gives `arguments` as a **JSON string** | Concatenate the string, then `JSON.parse` it |
 | End of the stream | The stream ends | `interaction.completed` (also when `status` is `requires_action`), then `[DONE]`. That final event carries no steps | Build the call from the step events, not from the final event |
 | Text of the answer | `response.text`, or `candidates[0].content.parts` | `model_output` steps (the SDKs also offer `output_text`) | Join the text of every `model_output` step: `output_text` skips text that comes before a tool step |
-| Usage | `usageMetadata.promptTokenCount`, `thoughtsTokenCount` | `usage.total_input_tokens`, `usage.total_thought_tokens`; when streaming, only on `interaction.completed`. On a chained turn the Developer API counts only the new input in `total_input_tokens` and the full context in `initial_input_tokens`; Vertex puts the full context in `total_input_tokens` | Rename your metrics, read the stream to the end to get them, and don't compare token counts across providers |
+| Usage | `usageMetadata.promptTokenCount`, `thoughtsTokenCount` | `usage.total_input_tokens`, `usage.total_thought_tokens`; when streaming, only on `interaction.completed`. On a chained turn Vertex puts the full context in `total_input_tokens`. The Developer API always has it in `initial_input_tokens`; its `total_input_tokens` covered only the new input on a text-only chain, but everything once the history held a file | Rename your metrics, read the stream to the end to get them, and don't compare token counts across providers |
 | Automatic function calling (Python SDK) | Available | Not available yet | Write the call → run → result loop yourself |
 | Remote MCP servers | — | Not for Gemini 3 yet | Call MCP from your own code as normal functions |
 
@@ -101,8 +104,8 @@ for (let round = 0; it.status === "requires_action" && round < 5; round++) {
 7. **Leaving `tool_choice: "any"` on.** It forces a call even for "say hello". If you set it for the first
    round, set it back to `auto` when you send the results.
 8. **Relying on `tool_choice: "none"`.** With tools still attached and a prompt that asks for one, the
-   request failed with HTTP 400 `malformed_tool_call` ("Model generated invalid JSON syntax…") in 2 of 3
-   tries on both providers: the model tried to call anyway. Catch that error and retry once. To really
+   request failed with HTTP 400 `malformed_tool_call` ("Model generated invalid JSON syntax…") in most
+   tries on both providers (2 or 3 of every 3 across runs): the model tried to call anyway. Catch that error and retry once. To really
    turn tools off on the Developer API, leave them out of the request.
 9. **Sending a result as a bare string.** On Vertex the request succeeded but the model answered that the
    tool returned no data. Send an object or a list of content parts.
@@ -118,7 +121,107 @@ for (let round = 0; it.status === "requires_action" && round < 5; round++) {
 
 ---
 
-## 4. Why the app is slower than Postman
+## 4. Files
+
+Most chat apps send attachments **inline**: the file's bytes, base64-encoded, inside the request. This
+section is mostly about that. Everything here was tested on both providers unless it says otherwise.
+
+### 4.1 Sending a file inline
+
+```json
+{
+  "model": "gemini-3.8-flash",
+  "input": [{
+    "type": "user_input",
+    "content": [
+      { "type": "document", "mime_type": "application/pdf", "data": "<base64>" },
+      { "type": "image", "mime_type": "image/png", "data": "<base64>" },
+      { "type": "text", "text": "Compare the invoice with the photo." }
+    ]
+  }]
+}
+```
+
+- **Wrap the content in a `user_input` step.** On the Developer API `v1`, a flat `input: [image, text]`
+  (the form most beta examples use) fails with
+  `The value 'text' is not supported for 'input[1].type' in v1, it is available in v1beta.`
+  Vertex `v1beta1` and the Developer API `v1beta` accept both forms.
+- **`data` is plain base64.** A browser's `FileReader.readAsDataURL()` result starts with
+  `data:image/png;base64,`, and sending that fails with `Expected string, corrupt base64`. Strip everything
+  up to the comma.
+- **Always set `mime_type`.** The Developer API guessed it for a PNG; Vertex rejected the request
+  (`Missing/unsupported mime_type in image content.`).
+- **Put the question after the files**, as Google's document guide recommends.
+- **Limits** (from the docs): 100 MB per request, and 50 MB or 1,000 pages for a PDF. Base64 makes a file
+  about a third bigger, so a 75 MB file is already over the request limit.
+
+### 4.2 Which files work
+
+| File | Developer API `v1` | Vertex `v1beta1` | How the model reads it |
+| --- | --- | --- | --- |
+| PDF (`type: "document"`) | ✅ | ✅ | As page images plus text: about 518 tokens per page in testing, counted under the `image` modality |
+| PNG, JPEG (`type: "image"`) | ✅ | ✅ | 1,089 tokens for a small image at the default resolution |
+| `text/plain`, `text/markdown`, `text/csv`, `text/html` (`type: "document"`) | ✅ | ✅ | As plain text: formatting and HTML tags are lost |
+| `application/json` (`type: "document"`) | ✅ | ❌ `mimeType … application/json, which is not supported` | Send it as `text/plain` or as a text item |
+| DOCX, PPTX, XLSX | ❌ | ❌ `Request contains an invalid argument.` | Convert to PDF, or extract the text first |
+
+Audio and video use the same item shape (`type: "audio"`, `type: "video"`) according to the docs; they
+were not tested here.
+
+### 4.3 What happens after the first turn
+
+- **Sent once, kept in the chain.** Turns 2 and 3, sent with `previous_interaction_id` and no files,
+  still read the PDF and the image. A new interaction did not see them.
+- **Re-read on every turn.** The file's tokens are counted again on every chained turn: a 12-page PDF
+  added 6,216 input tokens to each of four turns. Implicit caching discounted part of it only now and
+  then (4,136 tokens on one turn, none on the next two). Inline files are cheap to send, not to keep.
+- **Stored at Google.** A GET on the interaction returns the base64 bytes. They stay until the
+  interaction expires (Developer API: 55 days paid, 1 day free; Vertex preview: 7 days) or you DELETE it.
+  Deleting the chat in your app does not delete Google's copy.
+- **Gone after DELETE or expiry.** Continuing a deleted chain fails with
+  `404 Requested entity was not found.`
+- **Upload size barely mattered.** In one test per provider on a fast connection, sending a 5 MB image
+  again with the next turn (3.4–4.0 s) was not slower than chaining without it (6.2–7.6 s). The model's
+  own time dominates. Upload size matters on slow links and for the 100 MB limit.
+
+### 4.4 When every file must be sent again
+
+Inline files live only inside the chain. When the chain can't be used, all of them must be sent again
+from your own copy:
+
+- the interaction expired or was deleted;
+- the app switched model or provider, or rebuilds after a stopped or failed turn;
+- `store: false`, where every request carries the full history.
+
+Keep your own copy of every file (this repository keeps them in IndexedDB), and send generated images
+back as `model_output` content. A rebuild puts every file of the conversation into one request, so a long
+chat can pass the 100 MB limit even though each turn was small. Check the total before rebuilding, and
+tell the user if old files have to be dropped.
+
+### 4.5 Keeping file cost down
+
+- **Image resolution.** A per-item `resolution` field changed image tokens only on the Developer API:
+  `low` 256, `medium` 529, `high` and the default 1,089. Vertex accepted the field and ignored it. On PDF
+  documents both providers rejected it (`Unknown parameter 'resolution'`), although the docs list it for
+  PDFs too.
+- **Attach a file once.** It is already in the chain; attaching it again in a later turn adds a second copy.
+- **Extract the text when layout doesn't matter.** One line of text as a document cost about 20 tokens;
+  the same line as a one-page PDF cost about 518.
+
+### 4.6 Uploaded files (Files API) break chains
+
+`{ type: "document", uri, mime_type }` stores only a link in the chain, and Files API uploads expire
+after 48 hours. After the uploaded file was deleted (the same as expiring), every later turn of the chain
+failed with `403 You do not have permission to access the File … or it may not exist.`, even turns that
+didn't mention the file.
+
+With generateContent you own the history, so you can re-upload and swap the link. In Interactions the link
+is fixed in Google's copy, so you must start a new chain with a fresh upload. For chat attachments, inline
+is the safer default. Use uploads for files above the inline limit, and track their expiry.
+
+---
+
+## 5. Why the app is slower than Postman
 
 Postman usually sends one small, warm request. An app adds state, settings, a server and a UI.
 
@@ -163,19 +266,19 @@ Postman usually sends one small, warm request. An app adds state, settings, a se
 
 ---
 
-## 5. Why the first turn of a new chat is slow
+## 6. Why the first turn of a new chat is slow
 
-- A cold login token, a cold connection and possibly a cold server instance (§4, pitfalls 7 and 8).
+- A cold login token, a cold connection and possibly a cold server instance (§5, pitfalls 7 and 8).
 - Work the app does only for a new chat, awaited before the model call: creating the session, loading
   user data, retrieval, or a second model call that writes a chat title.
 - The heaviest prompt: the full system instruction, tool definitions and attachments, with nothing reused
   yet. Keep the fixed part of the prompt first and per-session data (names, dates, IDs) last, so the
   repeated beginning can be cached.
-- High thinking with an empty screen (§4, pitfall 9).
+- High thinking with an empty screen (§5, pitfall 9).
 
 ---
 
-## 6. Migration checklist
+## 7. Migration checklist
 
 - [ ] New URL, `model` in the body, `stream: true`.
 - [ ] Tools flattened to `{ type: "function", … }`; built-in tools renamed to `{ type: "…" }`.
@@ -187,6 +290,10 @@ Postman usually sends one small, warm request. An app adds state, settings, a se
 - [ ] Results matched by `call_id`; all parallel results returned in one request.
 - [ ] Results sent as an object or a content list, never a bare string.
 - [ ] A `malformed_tool_call` 400 retried once.
+- [ ] Inline files inside a `user_input` step, as plain base64 (no `data:` prefix), always with `mime_type`.
+- [ ] Office files converted to PDF or text; JSON sent as text on Vertex.
+- [ ] A local copy of every file for rebuilding a chain, with the total checked against the 100 MB limit.
+- [ ] Files API uploads tracked against their 48-hour expiry, or not used for chat attachments.
 - [ ] Streamed `arguments_delta` strings concatenated, then parsed.
 - [ ] UI unlocked on `interaction.completed`; the interaction ID saved even when the user stops later.
 - [ ] A round limit on the tool loop.
@@ -194,7 +301,7 @@ Postman usually sends one small, warm request. An app adds state, settings, a se
 
 ---
 
-## 7. Not checked live, or not stable
+## 8. Not checked live, or not stable
 
 - Automatic function calling and remote MCP support come from the docs, not from tests.
 - What the model does after partial results (§3, pitfall 4) and how often `tool_choice: "none"` fails
@@ -210,10 +317,14 @@ Postman usually sends one small, warm request. An app adds state, settings, a se
   Interactions overview (2026-10-28), and the Vertex figure from this repository's
   [Interactions guide](interactions.en.md).
 - The SDK `output_text` behavior in §1 comes from Google's migration guide; the check calls REST only.
+- Audio, video, Cloud Storage and external-URL files were not tested. The 100 MB, 50 MB and 1,000-page
+  limits in §4 come from Google's docs.
+- The `resolution`, caching and 5 MB upload numbers in §4 come from one-off tests on 2026-10-28, not from
+  the live check.
 
 ---
 
-## 8. How this was verified
+## 9. How this was verified
 
 Run `npm run check:interactions-tools` (or add `-- gemini` / `-- vertex`). It calls Google directly with
 small requests, low thinking and `gemini-3.8-flash` (set `CHECK_MODEL` to change it). It checks:
@@ -227,12 +338,15 @@ small requests, low thinking and `gemini-3.8-flash` (set `CHECK_MODEL` to change
 - `store: false` with and without the `thought` step;
 - every old-shape error in §2;
 - JSON output with `response_format`, and uppercase schema types;
-- `google_search`, and the streaming event shapes.
+- `google_search`, and the streaming event shapes;
+- inline files: the `user_input` wrapper, files kept and re-counted across turns, GET and DELETE, the
+  `data:` prefix and `mime_type` errors, which document types work, and a chain broken by a deleted
+  Files API upload.
 
 On 2026-10-28 it passed on both the Gemini Developer API (`v1`) and Vertex AI (`v1beta1`, global); one
 Vertex check needed a retry after a network error.
 
-The speed numbers in §4 come from a latency review of this repository on the same day: Node 22.18 on
+The speed numbers in §5 come from a latency review of this repository on the same day: Node 22.18 on
 Windows, measured against `aiplatform.googleapis.com` and `generativelanguage.googleapis.com`.
 
 ## Official references (reviewed 2026-10-28)
