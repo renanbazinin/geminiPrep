@@ -1,15 +1,16 @@
 // Live check of the generateContent → Interactions migration guide
-// (docs/guides/interactions-migration-pitfalls.en.md): tool mapping, inheritance and streaming.
+// (docs/guides/interactions-migration-pitfalls.en.md): tool mapping, inheritance, streaming and files.
 //
 //   npm run check:interactions-tools            # every configured provider
 //   npm run check:interactions-tools -- gemini  # only the Gemini Developer API (v1)
 //   npm run check:interactions-tools -- vertex  # only Vertex AI (v1beta1, global)
 //
 // Calls Google directly, because the app's chat does not send custom function tools.
-// About 35 small, billable requests per provider with low thinking. Credentials are never printed.
+// About 50 small, billable requests per provider with low thinking. Credentials are never printed.
 // Lines marked "·" report model-dependent behavior and never fail the run.
 
 import "dotenv/config";
+import { deflateSync } from "node:zlib";
 import { resolveVertexProject } from "../server/catalog.js";
 import { getVertexAccessToken } from "../server/vertex-auth.js";
 
@@ -46,6 +47,39 @@ const answer = (reply: Reply) => steps(reply).filter((step) => step.type === "mo
   .flatMap((step) => step.content ?? []).map((part: Json) => part.text ?? "").join("").trim();
 const errorOf = (reply: Reply) => String(reply.body.error?.message ?? JSON.stringify(reply.body)).slice(0, 160);
 const result = (call: Json, value: unknown) => ({ type: "function_result", call_id: call.id, name: call.name, result: value });
+const user = (...content: Json[]) => [{ type: "user_input", content }];
+
+/** A one-page PDF whose only text is `text` (Helvetica, no compression). */
+function pdf(text: string): Buffer {
+  const stream = `BT /F1 18 Tf 30 100 Td (${text}) Tj ET`;
+  const objects = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 400 200] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+    `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`,
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+  ];
+  let out = "%PDF-1.4\n";
+  const offsets = objects.map((body, i) => { const at = out.length; out += `${i + 1} 0 obj\n${body}\nendobj\n`; return at; });
+  const xref = out.length;
+  out += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets.map((at) => `${String(at).padStart(10, "0")} 00000 n \n`).join("")}`;
+  return Buffer.from(`${out}trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`, "latin1");
+}
+
+/** A solid-color 64×64 PNG. */
+function png([r, g, b]: [number, number, number]): Buffer {
+  const crcTable = Array.from({ length: 256 }, (_, n) => { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; return c >>> 0; });
+  const crc = (bytes: Buffer) => { let c = 0xffffffff; for (const byte of bytes) c = crcTable[(c ^ byte) & 0xff]! ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; };
+  const chunk = (type: string, data: Buffer) => {
+    const typed = Buffer.concat([Buffer.from(type), data]);
+    const length = Buffer.alloc(4); length.writeUInt32BE(data.length);
+    const sum = Buffer.alloc(4); sum.writeUInt32BE(crc(typed));
+    return Buffer.concat([length, typed, sum]);
+  };
+  const header = Buffer.alloc(13); header.writeUInt32BE(64, 0); header.writeUInt32BE(64, 4); header[8] = 8; header[9] = 2;
+  const row = Buffer.concat([Buffer.from([0]), Buffer.from(Array.from({ length: 64 }, () => [r, g, b]).flat())]);
+  return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk("IHDR", header), chunk("IDAT", deflateSync(Buffer.concat(Array(64).fill(row)))), chunk("IEND", Buffer.alloc(0))]);
+}
 
 /** Streams one interaction and collects the event types and the function call it builds. */
 async function stream(p: Provider, body: Json) {
@@ -160,7 +194,7 @@ async function checkDoubleContext(p: Provider) {
   const chained = await create(p, { previous_interaction_id: lean.body.id, input: "Reply OK.", generation_config: LOW });
   const usage = chained.body.usage ?? {};
   if (p.vertex) check(usage.initial_input_tokens === undefined && usage.total_input_tokens > 100, "Vertex: total_input_tokens on a chained turn includes the stored history", JSON.stringify(usage));
-  else check(usage.total_input_tokens < 20 && usage.initial_input_tokens > 100, "Developer API: total_input_tokens on a chained turn counts only the new input; initial_input_tokens has the full context", JSON.stringify(usage));
+  else check(usage.total_input_tokens < 20 && usage.initial_input_tokens > 100, "Developer API, text-only chain: total_input_tokens counts only the new input; initial_input_tokens has the full context", JSON.stringify(usage));
 }
 
 async function checkStatelessAndOldShapes(p: Provider) {
@@ -225,9 +259,60 @@ async function checkGenerateContentBaseline(p: Provider) {
   check(missing.status === 400 && /thought_signature/i.test(errorOf(missing)), "generateContent: dropping thoughtSignature is rejected with a clear 400", `HTTP ${missing.status}`);
 }
 
+async function checkInlineFiles(p: Provider) {
+  const doc = { type: "document", mime_type: "application/pdf", data: pdf("The secret code is 4417.").toString("base64") };
+  const image = { type: "image", mime_type: "image/png", data: png([220, 20, 20]).toString("base64") };
+  const ask = { type: "text", text: "Here is a document and an image. Reply OK only." };
+
+  const flat = await create(p, { input: [image, ask], generation_config: LOW });
+  if (p.vertex) check(flat.status === 200, "Vertex accepts a flat input array of content items", errorOf(flat));
+  else check(flat.status === 400 && /available in v1beta/.test(errorOf(flat)), "Developer API v1 rejects a flat input array; files need a user_input step", `HTTP ${flat.status}: ${errorOf(flat)}`);
+
+  const first = await create(p, { input: user(doc, image, ask), generation_config: LOW });
+  const fileTokens = (reply: Reply) => Number((reply.body.usage?.input_tokens_by_modality ?? []).find((m: Json) => m.modality === "image")?.tokens);
+  const second = await create(p, { previous_interaction_id: first.body.id, input: "What is the secret code in the document, and what color is the image? One short line.", generation_config: LOW });
+  check(/4417/.test(answer(second)) && /red/i.test(answer(second)), "Files sent inline once are still readable on a chained turn", `"${answer(second)}"`);
+  check(fileTokens(second) > 0 && fileTokens(second) === fileTokens(first), "The files are counted again on every chained turn", `image-modality tokens: ${fileTokens(first)} → ${fileTokens(second)}`);
+  const fresh = await create(p, { input: "What is the secret code in the document? If you have no document, reply NONE.", generation_config: LOW });
+  check(!/4417/.test(answer(fresh)), "A new interaction does not see them", `"${answer(fresh)}"`);
+  if (!p.vertex) info(`Developer API total_input_tokens on a chained turn with a file: ${second.body.usage?.total_input_tokens} (initial_input_tokens ${second.body.usage?.initial_input_tokens})`);
+
+  const stored = await fetch(`${p.interactions}/${encodeURIComponent(first.body.id)}`, { headers: p.headers });
+  check(stored.status === 200 && (await stored.text()).includes(doc.data.slice(0, 60)), "GET on the stored interaction returns the file bytes", `HTTP ${stored.status}`);
+  const removed = await fetch(`${p.interactions}/${encodeURIComponent(first.body.id)}`, { method: "DELETE", headers: p.headers });
+  const afterDelete = await create(p, { previous_interaction_id: first.body.id, input: "What color was the image?", generation_config: LOW });
+  check(removed.status === 200 && afterDelete.status === 404, "After DELETE, continuing the chain fails with 404", `DELETE ${removed.status}, continue ${afterDelete.status}`);
+
+  const dataUrl = await create(p, { input: user({ ...image, data: `data:image/png;base64,${image.data}` }, ask), generation_config: LOW });
+  check(dataUrl.status === 400 && /corrupt base64/.test(errorOf(dataUrl)), "A data: URL prefix in data is rejected as corrupt base64", `HTTP ${dataUrl.status}`);
+  const noMime = await create(p, { input: user({ type: "image", data: image.data }, ask), generation_config: LOW });
+  check(p.vertex ? noMime.status === 400 : noMime.status === 200, `Missing mime_type: ${p.vertex ? "rejected on Vertex" : "guessed on the Developer API"}`, `HTTP ${noMime.status}: ${errorOf(noMime)}`);
+  const asDocument = (mime: string, text: string) => create(p, { input: user({ type: "document", mime_type: mime, data: Buffer.from(text).toString("base64") }, { type: "text", text: "What is the secret code? Number only." }), generation_config: LOW });
+  const markdown = await asDocument("text/markdown", "# Note\n\nThe secret code is **5522**.");
+  check(/5522/.test(answer(markdown)), "text/markdown documents are read as text", errorOf(markdown));
+  const json = await asDocument("application/json", '{"secret_code": 5524}');
+  check(p.vertex ? json.status === 400 : /5524/.test(answer(json)), `application/json documents: ${p.vertex ? "rejected on Vertex" : "read on the Developer API"}`, `HTTP ${json.status}: ${errorOf(json)}`);
+  const docx = await asDocument("application/vnd.openxmlformats-officedocument.wordprocessingml.document", "PK not a real docx");
+  check(docx.status === 400, "DOCX documents are rejected", `HTTP ${docx.status}`);
+
+  if (p.vertex) return;
+  // Files API reference: the stored chain keeps only the link, so a deleted (or expired) file breaks it.
+  const bytes = pdf("The secret code is 4417.");
+  const start = await fetch("https://generativelanguage.googleapis.com/upload/v1beta/files", { method: "POST", headers: {
+    "x-goog-api-key": p.headers["x-goog-api-key"]!, "X-Goog-Upload-Protocol": "resumable", "X-Goog-Upload-Command": "start",
+    "X-Goog-Upload-Header-Content-Length": String(bytes.length), "X-Goog-Upload-Header-Content-Type": "application/pdf", "Content-Type": "application/json",
+  }, body: JSON.stringify({ file: { display_name: "interactions-tools-live-check" } }) });
+  const uploaded = await fetch(start.headers.get("x-goog-upload-url")!, { method: "POST", headers: { "X-Goog-Upload-Offset": "0", "X-Goog-Upload-Command": "upload, finalize" }, body: new Uint8Array(bytes) });
+  const file = ((await uploaded.json()) as Json).file as Json;
+  const linked = await create(p, { input: user({ type: "document", uri: file.uri, mime_type: "application/pdf" }, ask), generation_config: LOW });
+  await fetch(`https://generativelanguage.googleapis.com/v1beta/${file.name}`, { method: "DELETE", headers: { "x-goog-api-key": p.headers["x-goog-api-key"]! } });
+  const broken = await create(p, { previous_interaction_id: linked.body.id, input: "Reply OK.", generation_config: LOW });
+  check(linked.status === 200 && broken.status === 403, "A chain that references a deleted Files API upload fails with 403 on every later turn", `first ${linked.status}, after delete ${broken.status}: ${errorOf(broken)}`);
+}
+
 async function runProvider(p: Provider) {
   section(`${p.name} — ${MODEL}`);
-  for (const step of [checkGenerateContentBaseline, checkMapping, checkToolChoice, checkParallel, checkInheritance, checkDoubleContext, checkStatelessAndOldShapes, checkJsonOutput, checkStreaming]) {
+  for (const step of [checkGenerateContentBaseline, checkMapping, checkToolChoice, checkParallel, checkInheritance, checkDoubleContext, checkStatelessAndOldShapes, checkJsonOutput, checkStreaming, checkInlineFiles]) {
     try { await step(p); } catch (error) { fail(`${step.name} — ${error instanceof Error ? error.message : String(error)}`); }
   }
 }
