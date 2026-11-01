@@ -69,11 +69,11 @@ describe("Interactions request mapping", () => {
     expect(result.generation_config).toMatchObject({ temperature: 0, top_p: 0 });
   });
 
-  it("uses native image output and ignores text-only configuration for images", () => {
-    const result = buildInteractionBody(body({ tool: "image", interactions: { ...DEFAULT_INTERACTIONS, googleSearch: true, imageAspectRatio: "16:9", imageSize: "2K", responseFormat: "json" } }));
+  it.each(["v1", "v1beta"] as const)("uses native image output without rejected delivery on %s and ignores text-only configuration", (apiVersion) => {
+    const result = buildInteractionBody(body({ tool: "image", interactions: { ...DEFAULT_INTERACTIONS, apiVersion, googleSearch: true, imageAspectRatio: "16:9", imageSize: "2K", responseFormat: "json" } }));
     expect(result).not.toHaveProperty("tools");
     expect(result.generation_config).not.toHaveProperty("thinking_level");
-    expect(result.response_format).toEqual([{ type: "text" }, { type: "image", delivery: "inline", aspect_ratio: "16:9", image_size: "2K" }]);
+    expect(result.response_format).toEqual([{ type: "text" }, { type: "image", aspect_ratio: "16:9", image_size: "2K" }]);
   });
 
   it.each([

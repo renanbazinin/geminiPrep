@@ -1,5 +1,11 @@
 # Stateful Gemini chat
 
+For image input, generation/editing, version and region compatibility, all image options, and the
+2026-11-01 live findings, see [Images in the Interactions API](interactions-images.en.md).
+Developer v1/v1beta generation and editing passed with the delivery fix; Vertex Interactions rejected
+the app's pinned image-generation model. The image controls below describe request mapping, not a
+guarantee that every provider/model combination can generate images.
+
 The main chat supports Interactions on both providers. Select **Vertex AI → Interactions** to use your Google Cloud project and Application Default Credentials (ADC), or **Gemini Developer API → Interactions** to use an API key. The Cloud endpoint is `v1beta1` preview in `locations/global`; the Developer API defaults to stable `v1`. Existing provider/model selections and local conversations are preserved. Each provider has its own API-mode selection; existing Vertex settings stay on Generate Content until you choose Interactions. Jira retains its existing request path.
 
 ## Google Cloud setup

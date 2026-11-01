@@ -9,6 +9,10 @@ streaming, built-in tools, and expanded settings. Select **Vertex AI → Interac
 Google Cloud project and ADC, or **Gemini Developer API → Interactions** for an API key.
 Existing provider selections and chats are preserved. See the
 [Interactions guide](docs/guides/interactions.en.md) for controls, migration, and limitations.
+The [images in Interactions guide](docs/guides/interactions-images.en.md) covers input, generation,
+editing, v1/v1beta, regions, every exposed image option, and live compatibility results. Developer
+image generation works after omitting the unsupported delivery field; Vertex Interactions rejected
+the app's pinned image-generation model in the 2026-11-01 live check.
 The older stateless **Generate Content** API (still available as the legacy mode) is explained in a general
 guide in [English](docs/guides/generate-content.en.md) and [Hebrew](docs/guides/generate-content.he.md).
 Common pitfalls when moving an app from Generate Content to Interactions (tool mapping, inheritance,

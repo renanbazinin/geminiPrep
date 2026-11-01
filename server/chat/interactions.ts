@@ -64,7 +64,9 @@ export function buildInteractionBody(request: ChatStreamRequest): RecordValue {
       ...(options.responseSchema.trim() ? { response_format: JSON.parse(options.responseSchema) } : {}),
     } : {}) : image ? { response_format: [
       { type: "text" },
-      { type: "image", delivery: "inline", aspect_ratio: options.imageAspectRatio, image_size: options.imageSize },
+      // The schema lists delivery, but the image backend rejects even "inline".
+      // Omit it to receive the provider's default inline image data (verified on v1/v1beta).
+      { type: "image", aspect_ratio: options.imageAspectRatio, image_size: options.imageSize },
     ] } : options.responseFormat === "json" ? {
       response_format: { type: "text", mime_type: "application/json",
         ...(options.responseSchema.trim() ? { schema: JSON.parse(options.responseSchema) } : {}),
