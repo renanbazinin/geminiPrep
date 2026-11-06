@@ -18,3 +18,5 @@ service-account*.json
 
 coverage/
 .jira-demo/
+# Large files uploaded to the local server (LARGE_FILES_DIR)
+.data/

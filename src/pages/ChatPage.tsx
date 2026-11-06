@@ -41,8 +41,10 @@ import {
   ATTACHMENT_ACCEPT,
   MAX_ATTACHMENTS_PER_MESSAGE,
   MAX_ATTACHMENT_BYTES,
+  attachmentKind,
   attachmentToRequestPart,
   deleteAttachmentPayloads,
+  goesToServer,
   processAttachment,
 } from "../lib/attachments";
 import {
@@ -98,6 +100,23 @@ function fileSize(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
+function compactCount(value: number): string {
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
+  if (value >= 1_000) return `${Math.round(value / 1_000)}K`;
+  return String(value);
+}
+
+function attachmentDetail(attachment: ChatAttachment): string {
+  const base = `${(attachment.document?.format ?? attachment.kind).toUpperCase()} · ${fileSize(attachment.size)}`;
+  if (attachment.document) return `${base} · ~${compactCount(attachment.document.estimatedTokens)} tokens · on server`;
+  return `${base}${attachment.extractedCharacters ? ` · ${attachment.extractedCharacters.toLocaleString()} chars` : ""}`;
+}
+
+function attachmentTitle(attachment: ChatAttachment): string {
+  if (!attachment.document) return attachment.name;
+  return `${attachment.name}\nKept on the server until ${new Date(attachment.document.expiresAt).toLocaleString()}. When it is too large to read at once, Gemini searches and reads parts of it.`;
+}
+
 function AttachmentIcon({ attachment, size = 15 }: { attachment: ChatAttachment; size?: number }) {
   if (attachment.kind === "pptx") return <Presentation size={size} />;
   if (attachment.kind === "docx") return <FileType2 size={size} />;
@@ -109,9 +128,9 @@ function MessageAttachments({ attachments }: { attachments: ChatAttachment[] }) 
   return (
     <div className="message-attachments" aria-label="Attached files">
       {attachments.map((attachment) => (
-        <div className="message-attachment" key={attachment.id} title={attachment.name}>
+        <div className="message-attachment" key={attachment.id} title={attachmentTitle(attachment)}>
           <span><AttachmentIcon attachment={attachment} /></span>
-          <div><strong>{attachment.name}</strong><small>{attachment.kind.toUpperCase()} · {fileSize(attachment.size)}</small></div>
+          <div><strong>{attachment.name}</strong><small>{attachmentDetail(attachment)}</small></div>
         </div>
       ))}
     </div>
@@ -365,16 +384,24 @@ export function ChatPage() {
       setAttachmentError(`You can attach up to ${MAX_ATTACHMENTS_PER_MESSAGE} files to one message.`);
       return;
     }
-    const totalBytes = [...pendingAttachments.map((attachment) => attachment.size), ...files.map((file) => file.size)]
-      .reduce((sum, size) => sum + size, 0);
+    // Only files kept in this browser count toward the inline limit; large ones go to the server.
+    const limits = config?.largeFiles;
+    const staysLocal = (file: File) => {
+      const kind = attachmentKind(file);
+      return !limits || !kind || !goesToServer(file, kind, limits);
+    };
+    const totalBytes = [
+      ...pendingAttachments.filter((attachment) => !attachment.document).map((attachment) => attachment.size),
+      ...files.filter(staysLocal).map((file) => file.size),
+    ].reduce((sum, size) => sum + size, 0);
     if (totalBytes > MAX_ATTACHMENT_BYTES) {
-      setAttachmentError(`Attachments in one message cannot exceed ${MAX_ATTACHMENT_BYTES / 1024 / 1024} MB combined.`);
+      setAttachmentError(`Attachments kept in this browser cannot exceed ${MAX_ATTACHMENT_BYTES / 1024 / 1024} MB combined.`);
       return;
     }
     setProcessingFiles(true);
     const added: ChatAttachment[] = [];
     try {
-      for (const file of files) added.push(await processAttachment(file));
+      for (const file of files) added.push(await processAttachment(file, { largeFiles: limits }));
       const next = [...pendingAttachmentsRef.current, ...added];
       pendingAttachmentsRef.current = next;
       setPendingAttachments(next);
@@ -406,6 +433,7 @@ export function ChatPage() {
     setRunning(true);
     let assembled = "";
     let thinkingSummary = "";
+    const steps: string[] = [];
     const sources: NonNullable<ChatMessage["sources"]> = [];
     const searchSuggestions: string[] = [];
     let generatedImages: ChatGeneratedImage[] = [];
@@ -439,6 +467,13 @@ export function ChatPage() {
         },
         onActivity(text) {
           updateMessage(conversationId, assistantId, { activity: text });
+        },
+        onStep(text) {
+          steps.push(text);
+          updateDebug({
+            ...debug,
+            response: { ...debug.response, events: [...(debug.response.events ?? []), { event: "step", data: { text } }] },
+          }, { steps: [...steps] });
         },
         onOpen(response) {
           updateDebug({
@@ -652,7 +687,10 @@ export function ChatPage() {
     const now = new Date().toISOString();
     const attachments = [...pendingAttachmentsRef.current];
     try {
-      const plan = selectInteractionHistory(activeConversation.messages, settings, selectedTool, config.project);
+      // Large server files are re-planned each turn, so they need the full history.
+      const plan = attachments.some((attachment) => attachment.document)
+        ? { messages: activeConversation.messages, previousInteractionId: undefined }
+        : selectInteractionHistory(activeConversation.messages, settings, selectedTool, config.project);
       const currentHistory = await messageHistory(plan.messages);
       const files = attachments.length
         ? await Promise.all(attachments.map(attachmentToRequestPart))
@@ -803,6 +841,12 @@ export function ChatPage() {
                   <div className="message-content" dir={directionFor(message.content)}>
                     {message.recoveryNotice ? <p className="conversation-recovery" role="status">{message.recoveryNotice}</p> : null}
                     {message.thinkingSummary ? <details className="thinking-summary"><summary>Thinking summary</summary><p>{message.thinkingSummary}</p></details> : null}
+                    {message.steps?.length ? (
+                      <details className="thinking-summary file-steps">
+                        <summary>Steps on large files ({message.steps.length})</summary>
+                        <ol>{message.steps.map((step, index) => <li key={index}>{step}</li>)}</ol>
+                      </details>
+                    ) : null}
                     {message.status === "streaming" && message.activity ? <p className="interaction-activity" role="status">{message.activity}</p> : null}
                     {message.role === "assistant"
                       ? message.content
@@ -878,13 +922,13 @@ export function ChatPage() {
           {pendingAttachments.length > 0 || processingFiles ? (
             <div className="pending-attachments" aria-label="Files ready to attach">
               {pendingAttachments.map((attachment) => (
-                <div className="pending-attachment" key={attachment.id}>
+                <div className="pending-attachment" key={attachment.id} title={attachmentTitle(attachment)}>
                   <span className="pending-file-icon"><AttachmentIcon attachment={attachment} /></span>
-                  <div><strong>{attachment.name}</strong><small>{attachment.kind.toUpperCase()} · {fileSize(attachment.size)}{attachment.extractedCharacters ? ` · ${attachment.extractedCharacters.toLocaleString()} chars` : ""}</small></div>
+                  <div><strong>{attachment.name}</strong><small>{attachmentDetail(attachment)}</small></div>
                   <button type="button" onClick={() => removePendingAttachment(attachment)} aria-label={`Remove ${attachment.name}`}><X size={14} /></button>
                 </div>
               ))}
-              {processingFiles ? <div className="attachment-processing"><LoaderCircle size={15} />Reading files…</div> : null}
+              {processingFiles ? <div className="attachment-processing"><LoaderCircle size={15} />Preparing files…</div> : null}
             </div>
           ) : null}
           <div className="composer-main">
@@ -904,7 +948,7 @@ export function ChatPage() {
               onClick={() => fileInputRef.current?.click()}
               disabled={running || preparing || processingFiles}
               aria-label="Choose files"
-              title="Attach PDF, Markdown, JSON, text, DOCX, or PPTX"
+              title="Attach PDF, Markdown, JSON, text, log, CSV, DOCX, or PPTX"
             >
               {processingFiles ? <LoaderCircle className="spin" size={18} /> : <Paperclip size={18} />}
             </button>
@@ -935,7 +979,10 @@ export function ChatPage() {
             )}
           </div>
         </form>
-        <p className="composer-footnote">Enter to send · Tools stay on until you switch · Attach up to 10 files / 20 MB</p>
+        <p className="composer-footnote">
+          Enter to send · Tools stay on until you switch · Attach up to 10 files
+          {config?.largeFiles ? ` · Files up to ${Math.round(config.largeFiles.maxUploadBytes / 1024 / 1024)} MB; large ones are searched on the server` : " / 20 MB"}
+        </p>
       </div>
     </div>
   );

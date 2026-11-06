@@ -291,6 +291,8 @@ export function CachePage() {
         const attachment = await processAttachment(file);
         try {
           const part = await attachmentToRequestPart(attachment);
+          // Cache lab files are always local (no upload limits are passed above).
+          if (part.kind === "document") throw new Error(`${file.name} is stored on the server and cannot be cached.`);
           added.push({ ...part, id: createId() });
         } finally {
           await deleteAttachmentPayloads([attachment]);

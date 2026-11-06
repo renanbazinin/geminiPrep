@@ -1,0 +1,22 @@
+{
+  "name": "llm-large-files",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Make books, logs, and other oversized files usable by an LLM with a request-size limit and a context window: ingest, budget, search and read tools, and map-reduce.",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "peerDependencies": {
+    "jszip": "^3.10.0",
+    "unpdf": "^1.4.0"
+  },
+  "peerDependenciesMeta": {
+    "jszip": { "optional": true },
+    "unpdf": { "optional": true }
+  }
+}

@@ -18,7 +18,9 @@ export function interactionInput(messages: ChatStreamRequest["messages"]): Recor
       ...(message.content ? [{ type: "text", text: message.content }] : []),
       ...(message.files ?? []).map((file) => file.kind === "text"
         ? { type: "text", text: `Attached file: ${file.name}\n${file.text}` }
-        : { type: file.mimeType === "application/pdf" ? "document" : "image", mime_type: file.mimeType, data: file.data }),
+        : file.kind === "document"
+          ? { type: "text", text: `[Large file ${file.name} is stored on the server and was not loaded.]` }
+          : { type: file.mimeType === "application/pdf" ? "document" : "image", mime_type: file.mimeType, data: file.data }),
     ],
   }));
 }

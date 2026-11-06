@@ -91,6 +91,16 @@ export type ChatMessageDebug = {
 
 export type ChatAttachmentKind = "text" | "pdf" | "docx" | "pptx";
 
+/** A large file kept on the server, which plans whether the model reads it in full or with tools. */
+export type ServerDocumentInfo = {
+  id: string;
+  format: string;
+  lines: number;
+  estimatedTokens: number;
+  pages?: number;
+  expiresAt: string;
+};
+
 export type ChatAttachment = {
   id: string;
   storageKey: string;
@@ -99,6 +109,25 @@ export type ChatAttachment = {
   size: number;
   kind: ChatAttachmentKind;
   extractedCharacters?: number;
+  /** Set when the file was uploaded to the server instead of stored in this browser. */
+  document?: ServerDocumentInfo;
+};
+
+/** POST /api/documents response. */
+export type DocumentUploadResult = ServerDocumentInfo & {
+  name: string;
+  mimeType: string;
+  bytes: number;
+};
+
+/** Limits the browser uses to decide which attachments go to the server. */
+export type LargeFilesConfig = {
+  maxUploadBytes: number;
+  /** Text, DOCX, and PPTX files above this size (or extracted length) are uploaded. */
+  serverThresholdBytes: number;
+  /** PDFs up to this size are sent inline so Gemini can read their layout and images. */
+  pdfInlineMaxBytes: number;
+  ttlHours: number;
 };
 
 export type ChatRequestFilePart =
@@ -113,6 +142,13 @@ export type ChatRequestFilePart =
       name: string;
       mimeType: "application/pdf" | ChatImageMimeType;
       data: string;
+    }
+  | {
+      /** A reference to a server-side document; the server replaces it before calling the model. */
+      kind: "document";
+      name: string;
+      mimeType: string;
+      documentId: string;
     };
 
 export type ChatGeneratedImage = {
@@ -134,6 +170,8 @@ export type ChatMessage = {
   interaction?: { id: string; model: string; apiVersion: "v1" | "v1beta" | "v1beta1"; project?: string };
   thinkingSummary?: string;
   activity?: string;
+  /** Steps the model took on large files while answering. */
+  steps?: string[];
   id: string;
   role: MessageRole;
   content: string;
@@ -228,6 +266,8 @@ export type PublicConfig = {
     geminiModel: string;
     region: string;
   };
+  /** Absent from older servers; the browser then keeps every attachment local. */
+  largeFiles?: LargeFilesConfig;
 };
 
 export type ChatStreamRequest = {
@@ -265,6 +305,8 @@ export type ChatStreamEvent =
   | { event: "grounding"; data: { sources?: Array<{ title: string; url: string }>; searchSuggestions?: string } }
   | { event: "thinking"; data: { text: string } }
   | { event: "activity"; data: { text: string } }
+  /** A completed step on a large file, such as a search or a read, kept with the answer. */
+  | { event: "step"; data: { text: string } }
   | { event: "meta"; data: ChatStreamMeta }
   | { event: "delta"; data: { text: string } }
   | { event: "image"; data: ChatStreamImageData }
