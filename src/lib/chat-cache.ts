@@ -62,7 +62,9 @@ export async function ensureSessionCache(options: {
 
   const model = settings.models.vertex;
   const region = settings.region;
-  const parts: CacheFilePart[] = files;
+  // Large files live on the server, so their text is not available to cache from the browser.
+  const parts: CacheFilePart[] = files.filter((file) => file.kind !== "document");
+  if (parts.length === 0) return { status: "skipped", reason: "This conversation's files are stored on the server and cannot be cached." };
   const signature = cacheSignature({
     model,
     region,

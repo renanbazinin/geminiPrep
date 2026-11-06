@@ -1,5 +1,6 @@
-import type { ChatAttachment, ChatAttachmentKind, ChatRequestFilePart } from "../../shared/contracts";
+import type { ChatAttachment, ChatAttachmentKind, ChatRequestFilePart, LargeFilesConfig } from "../../shared/contracts";
 import { createId } from "./storage";
+import { deleteDocument, uploadDocument } from "./api";
 
 const DATABASE_NAME = "gemini-prep-files-v1";
 const STORE_NAME = "attachments";
@@ -7,9 +8,10 @@ export const MAX_ATTACHMENTS_PER_MESSAGE = 10;
 export const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
 export const MAX_EXTRACTED_CHARACTERS = 1_000_000;
 
+const TEXT_EXTENSIONS = ["md", "markdown", "json", "jsonl", "ndjson", "txt", "log", "csv", "tsv", "xml", "yaml", "yml"];
+
 export const ATTACHMENT_ACCEPT = [
-  ".pdf", ".md", ".markdown", ".json", ".txt", ".csv", ".xml", ".yaml", ".yml",
-  ".docx", ".pptx",
+  ".pdf", ...TEXT_EXTENSIONS.map((extension) => `.${extension}`), ".docx", ".pptx",
 ].join(",");
 
 type StoredAttachmentPayload =
@@ -66,7 +68,12 @@ export async function deleteStoredPayloads(keys: string[]): Promise<void> {
 }
 
 export async function deleteAttachmentPayloads(attachments: ChatAttachment[]): Promise<void> {
-  await deleteStoredPayloads(attachments.map((attachment) => attachment.storageKey));
+  // Server copies expire on their own; deleting them now just frees space sooner.
+  for (const attachment of attachments) {
+    if (attachment.document) void deleteDocument(attachment.document.id).catch(() => undefined);
+  }
+  const local = attachments.filter((attachment) => !attachment.document);
+  if (local.length) await deleteStoredPayloads(local.map((attachment) => attachment.storageKey));
 }
 
 function extension(name: string): string {
@@ -78,7 +85,7 @@ export function attachmentKind(file: Pick<File, "name" | "type">): ChatAttachmen
   if (file.type === "application/pdf" || ext === "pdf") return "pdf";
   if (ext === "docx" || file.type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") return "docx";
   if (ext === "pptx" || file.type === "application/vnd.openxmlformats-officedocument.presentationml.presentation") return "pptx";
-  if (["md", "markdown", "json", "txt", "csv", "xml", "yaml", "yml"].includes(ext)) return "text";
+  if (TEXT_EXTENSIONS.includes(ext)) return "text";
   if (file.type.startsWith("text/") || file.type === "application/json" || file.type === "application/xml") return "text";
   return null;
 }
@@ -148,12 +155,51 @@ function ensureExtractedSize(text: string, name: string): string {
   return text;
 }
 
-export async function processAttachment(file: File): Promise<ChatAttachment> {
+/**
+ * Whether a file is too large to send inline and should go to the server, judged by size alone.
+ * DOCX and PPTX can also be sent there after extraction, when their text turns out to be long.
+ */
+export function goesToServer(file: Pick<File, "size">, kind: ChatAttachmentKind, limits: LargeFilesConfig): boolean {
+  if (kind === "pdf") return file.size > limits.pdfInlineMaxBytes;
+  if (kind === "text") return file.size > limits.serverThresholdBytes;
+  return file.size > MAX_ATTACHMENT_BYTES;
+}
+
+async function uploadAttachment(file: File, kind: ChatAttachmentKind, limits: LargeFilesConfig): Promise<ChatAttachment> {
+  if (file.size > limits.maxUploadBytes) {
+    throw new Error(`${file.name} is larger than the ${Math.round(limits.maxUploadBytes / 1024 / 1024)} MB upload limit.`);
+  }
+  const uploaded = await uploadDocument(file, file.name, file.type);
+  return {
+    id: createId(),
+    storageKey: `server:${uploaded.id}`,
+    name: file.name,
+    mimeType: file.type || "text/plain",
+    size: file.size,
+    kind,
+    document: {
+      id: uploaded.id,
+      format: uploaded.format,
+      lines: uploaded.lines,
+      estimatedTokens: uploaded.estimatedTokens,
+      ...(uploaded.pages ? { pages: uploaded.pages } : {}),
+      expiresAt: uploaded.expiresAt,
+    },
+  };
+}
+
+/**
+ * Prepares one file for chat. Without `largeFiles` limits (as on the cache lab page) every file
+ * stays in this browser. With them, large files are uploaded and the server plans their use.
+ */
+export async function processAttachment(file: File, options: { largeFiles?: LargeFilesConfig } = {}): Promise<ChatAttachment> {
+  const kind = attachmentKind(file);
+  if (!kind) throw new Error(`${file.name} is not a supported file type.`);
+  const limits = options.largeFiles;
+  if (limits && goesToServer(file, kind, limits)) return uploadAttachment(file, kind, limits);
   if (file.size > MAX_ATTACHMENT_BYTES) {
     throw new Error(`${file.name} is larger than the local ${MAX_ATTACHMENT_BYTES / 1024 / 1024} MB limit.`);
   }
-  const kind = attachmentKind(file);
-  if (!kind) throw new Error(`${file.name} is not a supported file type.`);
   const id = createId();
   const storageKey = `attachment:${id}`;
   let extractedCharacters: number | undefined;
@@ -164,6 +210,7 @@ export async function processAttachment(file: File): Promise<ChatAttachment> {
     if (kind === "docx") text = await extractDocxText(await file.arrayBuffer());
     else if (kind === "pptx") text = await extractPptxText(await file.arrayBuffer());
     else text = await file.text();
+    if (limits && text.length > limits.serverThresholdBytes) return uploadAttachment(file, kind, limits);
     text = ensureExtractedSize(text, file.name);
     extractedCharacters = text.length;
     await storePayload(storageKey, { kind: "text", text });
@@ -199,6 +246,9 @@ export async function blobToBase64(blob: Blob): Promise<string> {
 }
 
 export async function attachmentToRequestPart(attachment: ChatAttachment): Promise<ChatRequestFilePart> {
+  if (attachment.document) {
+    return { kind: "document", name: attachment.name, mimeType: attachment.mimeType, documentId: attachment.document.id };
+  }
   const payload = await loadPayload(attachment.storageKey);
   if (!payload) throw new Error(`${attachment.name} is missing from this browser's local file storage.`);
   if (payload.kind === "text") {

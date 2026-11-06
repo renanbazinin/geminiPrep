@@ -6,6 +6,8 @@ import { chatModelFor } from "../../shared/gemini-4";
 /** Resume only the latest successful turn from this conversation and API/model. */
 export function selectInteractionHistory(messages: ChatMessage[], settings: AppSettings, tool: ChatToolId | null, project?: string | null) {
   const full = { messages, previousInteractionId: undefined as string | undefined };
+  // Large server files are re-planned every turn, so they always travel with the full history.
+  if (messages.some((message) => message.attachments?.some((attachment) => attachment.document))) return full;
   if (!usesInteractions(settings) || !settings.interactions.stateful || !settings.interactions.store) return full;
   let index = messages.length - 1;
   while (index >= 0 && messages[index].role !== "assistant") index--;

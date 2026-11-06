@@ -10,6 +10,7 @@ import type { ModelOption, RegionOption } from "../../shared/contracts.js";
 import { IMAGE_MODEL_ID, IMAGE_MODEL_REGION, isChatToolId, normalizeImageMimeType } from "../../shared/chat-tools.js";
 import { parseInteractionOptions } from "../../shared/interactions.js";
 import { gemini4RegionProblem, isGemini4Model } from "../../shared/gemini-4.js";
+import { isDocumentId } from "../../packages/large-files/src/index.js";
 
 const MAX_HISTORY_MESSAGES = 200;
 const MAX_TOTAL_CHARACTERS = 1_000_000;
@@ -178,6 +179,13 @@ export function validateChatRequest(
             mimeType: (imageMime ?? "application/pdf") as "application/pdf" | ChatImageMimeType,
             data: file.data,
           };
+        }
+        if (file.kind === "document") {
+          if (entry.role !== "user") {
+            fail(`messages[${index}].files[${fileIndex}] large files are only supported on user messages.`);
+          }
+          if (!isDocumentId(file.documentId)) fail(`messages[${index}].files[${fileIndex}].documentId is invalid.`);
+          return { kind: "document" as const, name: file.name, mimeType: file.mimeType, documentId: file.documentId };
         }
         fail(`messages[${index}].files[${fileIndex}].kind is invalid.`);
       });

@@ -38,11 +38,19 @@ visual preview uses a tighter limit; **Copy JSON** copies the complete stored tr
 The trace also identifies explicit or implicit cache hits from `cachedContentTokenCount` and shows
 the cached-token total separately.
 
-Chat messages support up to 10 local files / 20 MB combined. PDF files are sent as native visual
-parts. Markdown, JSON, CSV, XML, YAML, and plain text are sent as text parts. DOCX and PPTX files
-are unzipped locally and reduced to readable text before generation; legacy binary `.doc` files
+Chat messages support up to 10 files. Small files stay in the browser: PDF files are sent as
+native visual parts; Markdown, JSON, CSV, XML, YAML, logs, and plain text are sent as text parts;
+DOCX and PPTX files are unzipped locally and reduced to readable text; legacy binary `.doc` files
 are intentionally rejected. File bodies live in browser IndexedDB while conversation JSON keeps
 only metadata, preventing large base64 payloads from filling `localStorage`.
+
+**Large files** (books, logs, big exports, up to 100 MB) are uploaded to the server instead: text
+over 512 KB and PDFs over 7 MB by default. Each turn, the server decides whether a file fits the
+model's limits (default 10 MB per request, 1M-token context) and sends it in full, or gives Gemini
+a summary card plus tools to search, read line ranges, or read the whole file in parts. The steps
+Gemini took appear under its answer. The logic lives in a standalone package,
+[`packages/large-files`](packages/large-files/README.md), meant to become its own npm package.
+Limits are set with the `LARGE_FILES_*` variables in `.env.example`.
 
 ## Run locally
 

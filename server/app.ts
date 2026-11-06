@@ -23,6 +23,10 @@ import {
 } from "./region-probe.js";
 import { getVertexAccessToken } from "./vertex-auth.js";
 import { proxyChatStream } from "./chat/stream.js";
+import { hasDocumentParts, proxyDocumentChat } from "./chat/document-stream.js";
+import { createServerLargeFiles } from "./documents/config.js";
+import { documentRoutes } from "./documents/routes.js";
+import type { LargeFiles } from "../packages/large-files/src/index.js";
 import { validateChatRequest } from "./chat/validation.js";
 import {
   CACHE_DEFAULT_TTL_SECONDS,
@@ -43,11 +47,15 @@ import {
 export function createApp(options: {
   fetchImpl?: typeof fetch;
   getAccessToken?: () => Promise<string>;
+  largeFiles?: LargeFiles;
 } = {}) {
   const app = express();
   const getCacheAccessToken = options.getAccessToken ?? getVertexAccessToken;
+  const largeFiles = options.largeFiles ?? createServerLargeFiles();
   app.disable("x-powered-by");
   app.use(cors());
+  // Before express.json(): uploads arrive as raw bytes, including JSON files.
+  app.use("/api/documents", documentRoutes(largeFiles));
   app.use(express.json({ limit: "30mb" }));
   app.use("/api/jira", jiraRoutes({ fetchImpl: options.fetchImpl }));
   app.use("/api/special-group", specialGroupRoutes({ fetchImpl: options.fetchImpl }));
@@ -72,13 +80,9 @@ export function createApp(options: {
     const abortController = new AbortController();
     res.on("close", () => abortController.abort());
     try {
-      await proxyChatStream({
-        request,
-        project,
-        response: res,
-        fetchImpl: options.fetchImpl,
-        signal: abortController.signal,
-      });
+      const stream = { request, project, response: res, fetchImpl: options.fetchImpl, signal: abortController.signal };
+      if (hasDocumentParts(request)) await proxyDocumentChat({ ...stream, largeFiles });
+      else await proxyChatStream(stream);
     } catch (error) {
       if (abortController.signal.aborted || res.writableEnded) return;
       const message = error instanceof Error ? error.message : String(error);

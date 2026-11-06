@@ -1,4 +1,5 @@
 import type { PublicConfig } from "../shared/contracts.js";
+import { publicLargeFilesConfig } from "./documents/config.js";
 import {
   resolveGeminiChatModels,
   resolveProbeRegions,
@@ -45,6 +46,7 @@ export function buildPublicConfig(): PublicConfig {
       geminiModel: geminiModels[0]?.id ?? "gemini-2.5-flash",
       region: defaultRegion,
     },
+    largeFiles: publicLargeFilesConfig(),
   };
 }
 

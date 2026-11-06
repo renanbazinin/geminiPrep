@@ -43,6 +43,11 @@ function contentParts(message: ChatStreamRequest["messages"][number]): Array<Rec
       });
       continue;
     }
+    // The document chat path replaces references before this point; never send an ID as content.
+    if (file.kind === "document") {
+      parts.push({ text: `[Large file ${file.name} is stored on the server and was not loaded.]` });
+      continue;
+    }
     if (file.mimeType === "application/pdf") {
       parts.push({ text: `Attached PDF: ${file.name}` });
     }

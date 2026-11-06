@@ -3,6 +3,7 @@ import type {
   ChatStreamImageData,
   ChatStreamRequest,
   ChatStreamToolData,
+  DocumentUploadResult,
   PublicConfig,
   RegionTestConfig,
 } from "../../shared/contracts";
@@ -25,6 +26,26 @@ export async function fetchRegionConfig(signal?: AbortSignal): Promise<RegionTes
   return response.json() as Promise<RegionTestConfig>;
 }
 
+/** Uploads a large file as raw bytes; the server extracts, indexes, and keeps it for a limited time. */
+export async function uploadDocument(file: Blob, name: string, mimeType: string, signal?: AbortSignal): Promise<DocumentUploadResult> {
+  const response = await fetch("/api/documents", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/octet-stream",
+      "X-File-Name": encodeURIComponent(name),
+      "X-File-Type": mimeType || "application/octet-stream",
+    },
+    body: file,
+    signal,
+  });
+  if (!response.ok) throw new Error(await responseError(response));
+  return response.json() as Promise<DocumentUploadResult>;
+}
+
+export async function deleteDocument(id: string): Promise<void> {
+  await fetch(`/api/documents/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
 export async function streamChat(
   request: ChatStreamRequest,
   handlers: {
@@ -33,6 +54,7 @@ export async function streamChat(
     onDelta(text: string): void;
     onThinking?(text: string): void;
     onActivity?(text: string): void;
+    onStep?(text: string): void;
     onGrounding?(data: Extract<ChatStreamEvent, { event: "grounding" }>["data"]): void;
     onImage?(image: ChatStreamImageData): void | Promise<void>;
     onTool?(tool: ChatStreamToolData): void | Promise<void>;
@@ -86,6 +108,7 @@ export async function streamChat(
         if (eventName === "delta" && typeof data.text === "string") handlers.onDelta(data.text);
         if (eventName === "thinking" && typeof data.text === "string") handlers.onThinking?.(data.text);
         if (eventName === "activity" && typeof data.text === "string") handlers.onActivity?.(data.text);
+        if (eventName === "step" && typeof data.text === "string") handlers.onStep?.(data.text);
         if (eventName === "grounding") handlers.onGrounding?.(data as Extract<ChatStreamEvent, { event: "grounding" }>["data"]);
         if (eventName === "image" && typeof data.mimeType === "string" && typeof data.data === "string") {
           const mimeType = normalizeImageMimeType(data.mimeType) ?? (data.mimeType.startsWith("image/") ? "image/png" : null);

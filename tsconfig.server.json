@@ -12,6 +12,6 @@
     "noUncheckedIndexedAccess": true,
     "types": ["node"]
   },
-  "include": ["server/**/*.ts", "shared/**/*.ts"],
-  "exclude": ["server/**/*.test.ts"]
+  "include": ["server/**/*.ts", "shared/**/*.ts", "packages/*/src/**/*.ts"],
+  "exclude": ["server/**/*.test.ts", "packages/*/test/**"]
 }
