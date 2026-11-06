@@ -8,6 +8,7 @@ export default defineConfig({
     proxy: {
       "/api": "http://127.0.0.1:3001",
       "/docs": "http://127.0.0.1:3001",
+      "/login": "http://127.0.0.1:3001",
     },
   },
 });
