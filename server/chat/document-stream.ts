@@ -13,7 +13,8 @@ import {
 } from "../../packages/large-files/src/index.js";
 import { toGenerateContentUrl } from "../special-group/model-loop.js";
 import { getVertexAccessToken } from "../vertex-auth.js";
-import { resolveLargeFilesSettings } from "../documents/config.js";
+import { resolveLargeFilesSettings, type ServerLargeFiles } from "../documents/config.js";
+import { streamWithPackage } from "./document-stream-npm.js";
 import { proxyChatStream } from "./stream.js";
 import { createUpstreamRequest, describeUpstreamRequest, parseSseJson, upstreamErrorMessage } from "./upstream.js";
 
@@ -96,19 +97,20 @@ function stepSummary(label: string, result: ToolResult): string {
 
 /**
  * Chat with large server-side files. Files that fit go into the prompt and the normal chat path
- * runs (Generate Content or Interactions). Otherwise the model gets search/read tools and this
- * runs a streaming Generate Content tool loop.
+ * runs (Generate Content or Interactions). Otherwise the model gets search/read tools and a
+ * streaming Generate Content tool loop runs: askGemini from llm-large-files on the npm engine,
+ * or this file's own loop on the original engine.
  */
 export async function proxyDocumentChat(options: {
   request: ChatStreamRequest;
   project: string | null;
   response: Response;
-  largeFiles: LargeFiles;
+  largeFiles: ServerLargeFiles;
   fetchImpl?: typeof fetch;
   signal?: AbortSignal;
 }): Promise<void> {
   const { request, response, largeFiles } = options;
-  const prepared = await largeFiles.prepare(documentIds(request), baseRequestSize(request));
+  const prepared = await largeFiles.files.prepare(documentIds(request), baseRequestSize(request));
   if (prepared.missing.length) {
     const names = request.messages.flatMap((message) => message.files ?? [])
       .filter((file) => file.kind === "document" && prepared.missing.includes(file.documentId))
@@ -128,7 +130,12 @@ export async function proxyDocumentChat(options: {
     response.status(409).json({ error: "Large files need the full conversation history. Reconnect from local history and send again." });
     return;
   }
-  await runToolLoop({ ...options, request: materialized, prepared });
+  if (largeFiles.engine === "npm") {
+    // askGemini plans and places the documents itself, so it gets the original references.
+    await streamWithPackage({ ...options, files: largeFiles.files });
+    return;
+  }
+  await runToolLoop({ ...options, request: materialized, prepared, largeFiles: largeFiles.files });
 }
 
 async function runToolLoop(options: {

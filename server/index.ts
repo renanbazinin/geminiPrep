@@ -3,12 +3,13 @@ import fs from "node:fs";
 import path from "node:path";
 import express from "express";
 import { createApp } from "./app.js";
-import { createServerLargeFiles } from "./documents/config.js";
+import { createServerLargeFiles, describeLargeFilesEngine } from "./documents/config.js";
 
 const largeFiles = createServerLargeFiles();
 const app = createApp({ largeFiles });
+console.log(`Large files: ${describeLargeFilesEngine(largeFiles.engine)} (LARGE_FILES_ENGINE=${largeFiles.engine})`);
 // Expired uploads are also skipped on read; sweeping just reclaims the disk space.
-const sweep = () => void largeFiles.sweep().catch((error) => console.warn("Large-file cleanup failed:", error));
+const sweep = () => void largeFiles.files.sweep().catch((error) => console.warn("Large-file cleanup failed:", error));
 sweep();
 setInterval(sweep, 60 * 60 * 1000).unref();
 const distPath = path.resolve(process.cwd(), "dist");

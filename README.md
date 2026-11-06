@@ -48,9 +48,19 @@ only metadata, preventing large base64 payloads from filling `localStorage`.
 over 512 KB and PDFs over 7 MB by default. Each turn, the server decides whether a file fits the
 model's limits (default 10 MB per request, 1M-token context) and sends it in full, or gives Gemini
 a summary card plus tools to search, read line ranges, or read the whole file in parts. The steps
-Gemini took appear under its answer. The logic lives in a standalone package,
-[`packages/large-files`](packages/large-files/README.md), meant to become its own npm package.
-Limits are set with the `LARGE_FILES_*` variables in `.env.example`.
+Gemini took appear under its answer. Limits are set with the `LARGE_FILES_*` variables in
+`.env.example`.
+
+The logic comes from the [`llm-large-files`](https://www.npmjs.com/package/llm-large-files) npm
+package by default. `LARGE_FILES_ENGINE` picks the implementation:
+
+| `LARGE_FILES_ENGINE` | What runs |
+|---|---|
+| `npm` (default) | The published package: its library, its `askGemini` tool loop, and its upload handlers |
+| `original` | The in-repo copy in [`packages/large-files`](packages/large-files/README.md) and this app's own tool loop |
+
+Both engines store files the same way and stream the same events to the browser, so switching
+only needs a server restart. The startup log names the engine in use.
 
 ## Run locally
 

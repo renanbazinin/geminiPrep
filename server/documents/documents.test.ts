@@ -4,9 +4,22 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../app.js";
 import { resolveGeminiChatModels, resolveProbeRegions, resolveVertexChatModels } from "../catalog.js";
 import { validateChatRequest } from "../chat/validation.js";
+import { createLargeFiles as createPackageLargeFiles, MemoryDocumentStore as PackageMemoryStore } from "llm-large-files";
 import { baseRequestSize, materializeDocuments } from "../chat/document-stream.js";
-import { createLargeFiles, MemoryDocumentStore } from "../../packages/large-files/src/index.js";
+import { createLargeFiles as createOriginalLargeFiles, MemoryDocumentStore as OriginalMemoryStore } from "../../packages/large-files/src/index.js";
 import { DEFAULT_INTERACTIONS } from "../../shared/interactions.js";
+import { createServerLargeFiles, resolveLargeFilesEngine } from "./config.js";
+
+/** Every upload and chat test runs on both engines (LARGE_FILES_ENGINE=npm and =original). */
+const ENGINES = [
+  { engine: "npm", create: (options = {}) => ({ engine: "npm", files: createPackageLargeFiles({ store: new PackageMemoryStore(), ...options }) }) },
+  { engine: "original", create: (options = {}) => ({ engine: "original", files: createOriginalLargeFiles({ store: new OriginalMemoryStore(), ...options }) }) },
+] as const;
+
+/** All text the model sees in one turn. */
+function turnText(content) {
+  return content.parts.map((part) => part.text ?? "").join("\n");
+}
 
 function log(lines: number): string {
   return Array.from({ length: lines }, (_, index) => (index + 1) % 250 === 0
@@ -46,10 +59,29 @@ function chatBody(documentId: string, extra = {}) {
   };
 }
 
-describe("large file uploads", () => {
+describe("large files engine flag", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("uses the npm package by default and the original code on request", () => {
+    vi.stubEnv("LARGE_FILES_ENGINE", "");
+    expect(resolveLargeFilesEngine()).toBe("npm");
+    vi.stubEnv("LARGE_FILES_ENGINE", " Original ");
+    expect(resolveLargeFilesEngine()).toBe("original");
+    expect(createServerLargeFiles("original").engine).toBe("original");
+    expect(createServerLargeFiles("npm").engine).toBe("npm");
+  });
+
+  it("refuses an unknown engine instead of silently picking one", () => {
+    vi.stubEnv("LARGE_FILES_ENGINE", "v2");
+    expect(() => resolveLargeFilesEngine()).toThrow('LARGE_FILES_ENGINE must be "npm" or "original", not "v2".');
+  });
+});
+
+describe.each(ENGINES)("large file uploads ($engine engine)", ({ create }) => {
   it("stores a raw upload, including JSON, and returns its summary", async () => {
-    const largeFiles = createLargeFiles({ store: new MemoryDocumentStore() });
-    const app = createApp({ largeFiles });
+    const app = createApp({ largeFiles: create() });
     const upload = await request(app)
       .post("/api/documents")
       .set("Content-Type", "application/json")
@@ -65,15 +97,19 @@ describe("large file uploads", () => {
   });
 
   it("returns JSON errors for missing names, unreadable files, and oversized uploads", async () => {
-    const app = createApp({ largeFiles: createLargeFiles({ store: new MemoryDocumentStore(), maxUploadBytes: 1024 }) });
-    expect((await request(app).post("/api/documents").send("x")).body.error).toMatch(/X-File-Name/);
+    const app = createApp({ largeFiles: create({ maxUploadBytes: 1024 }) });
+    const unnamed = await request(app).post("/api/documents").send("x");
+    expect(unnamed.status).toBe(400);
+    expect(unnamed.body.error).toMatch(/X-File-Name/);
     const binary = await request(app).post("/api/documents").set("Content-Type", "application/octet-stream").set("X-File-Name", "a.bin").send(Buffer.alloc(500, 0));
     expect(binary.status).toBe(422);
     const big = await request(app).post("/api/documents").set("Content-Type", "application/octet-stream").set("X-File-Name", "a.txt").send(Buffer.alloc(5_000, 65));
     expect(big.status).toBe(413);
     expect(big.body.error).toMatch(/upload limit/);
   });
+});
 
+describe("document references", () => {
   it("validates document references in chat requests", () => {
     const catalogs = { vertexModels: resolveVertexChatModels(), geminiModels: resolveGeminiChatModels(), regions: resolveProbeRegions() };
     expect(() => validateChatRequest(chatBody("doc_../../etc"), catalogs)).toThrow(/documentId is invalid/);
@@ -98,7 +134,7 @@ describe("large file uploads", () => {
   });
 });
 
-describe("chat with large files", () => {
+describe.each(ENGINES)("chat with large files ($engine engine)", ({ engine, create }) => {
   const previousKey = process.env.GEMINI_API_KEY;
   beforeEach(() => {
     process.env.GEMINI_API_KEY = "test-key";
@@ -109,8 +145,8 @@ describe("chat with large files", () => {
   });
 
   it("puts a file that fits into the prompt and keeps the selected Interactions API", async () => {
-    const largeFiles = createLargeFiles({ store: new MemoryDocumentStore() });
-    const meta = await largeFiles.ingest({ name: "app.log", bytes: new TextEncoder().encode(log(500)) });
+    const largeFiles = create();
+    const meta = await largeFiles.files.ingest({ name: "app.log", bytes: new TextEncoder().encode(log(500)) });
     const fetchImpl = vi.fn(async () => sse([
       { event_type: "interaction.start", interaction: { id: "int_1" } },
       { event_type: "step.start", index: 0, step: { type: "model_output", content: [{ type: "text", text: "Two." }] } },
@@ -129,8 +165,8 @@ describe("chat with large files", () => {
   });
 
   it("gives the model search tools for a file that does not fit, and streams the answer", async () => {
-    const largeFiles = createLargeFiles({ store: new MemoryDocumentStore(), budget: { inlineTokens: 1_000 } });
-    const meta = await largeFiles.ingest({ name: "app.log", bytes: new TextEncoder().encode(log(5_000)) });
+    const largeFiles = create({ budget: { inlineTokens: 1_000 } });
+    const meta = await largeFiles.files.ingest({ name: "app.log", bytes: new TextEncoder().encode(log(5_000)) });
     const bodies = [];
     const fetchImpl = vi.fn(async (_url, init) => {
       bodies.push(JSON.parse(init.body));
@@ -155,8 +191,10 @@ describe("chat with large files", () => {
     const first = bodies[0];
     expect(first.tools[0].functionDeclarations.map((tool) => tool.name)).toEqual(["search_document", "read_document", "get_document_overview", "analyze_whole_document"]);
     expect(first.systemInstruction.parts[0].text).toContain(`app.log (document_id ${meta.id})`);
-    expect(first.contents[0].parts[0].text).toContain("--- Large attached file: app.log ---");
-    expect(first.contents[0].parts[0].text).not.toContain("request 4000 ok");
+    expect(turnText(first.contents[0])).toContain("How many deadlocks happened?");
+    expect(turnText(first.contents[0])).toContain("--- Large attached file: app.log ---");
+    expect(turnText(first.contents[0])).not.toContain("request 4000 ok");
+    expect(JSON.stringify(first)).not.toContain("[Large file app.log is stored on the server");
     // The model's turn goes back unchanged, thought signature included, followed by the result.
     const second = bodies[1];
     expect(second.contents.at(-2)).toEqual({ role: "model", parts: [
@@ -173,8 +211,8 @@ describe("chat with large files", () => {
 
   it("asks for an answer with no tools declared once the tool turns run out", async () => {
     vi.stubEnv("LARGE_FILES_MAX_TOOL_TURNS", "4");
-    const largeFiles = createLargeFiles({ store: new MemoryDocumentStore(), budget: { inlineTokens: 1_000 } });
-    const meta = await largeFiles.ingest({ name: "app.log", bytes: new TextEncoder().encode(log(5_000)) });
+    const largeFiles = create({ budget: { inlineTokens: 1_000 } });
+    const meta = await largeFiles.files.ingest({ name: "app.log", bytes: new TextEncoder().encode(log(5_000)) });
     const bodies = [];
     // Like Gemini 3 in practice: it keeps calling tools as long as any are declared.
     const fetchImpl = vi.fn(async (_url, init) => {
@@ -197,9 +235,48 @@ describe("chat with large files", () => {
   });
 
   it("asks for a fresh upload when a file has expired", async () => {
-    const app = createApp({ fetchImpl: vi.fn(), largeFiles: createLargeFiles({ store: new MemoryDocumentStore() }) });
+    const app = createApp({ fetchImpl: vi.fn(), largeFiles: create() });
     const response = await request(app).post("/api/chat/stream").send(chatBody(`doc_${"c".repeat(32)}`));
     expect(response.status).toBe(410);
     expect(response.body.error).toBe("app.log is no longer on the server. Start a new chat and attach the file again.");
+  });
+
+  it("reports a Gemini HTTP error as a stream error", async () => {
+    const largeFiles = create({ budget: { inlineTokens: 1_000 } });
+    const meta = await largeFiles.files.ingest({ name: "app.log", bytes: new TextEncoder().encode(log(5_000)) });
+    const fetchImpl = vi.fn(async () => Response.json({ error: { message: "Resource exhausted." } }, { status: 429 }));
+    const response = await request(createApp({ fetchImpl, largeFiles })).post("/api/chat/stream").send(chatBody(meta.id));
+    const streamed = events(response.text);
+    expect(streamed.at(-1)).toMatchObject({ event: "error", data: { message: "Resource exhausted.", status: 429 } });
+  });
+
+  it("keeps a file attached earlier in the conversation, and a message that is only a file", async () => {
+    const largeFiles = create({ budget: { inlineTokens: 1_000 } });
+    const meta = await largeFiles.files.ingest({ name: "app.log", bytes: new TextEncoder().encode(log(5_000)) });
+    const document = { kind: "document", name: "app.log", mimeType: "text/plain", documentId: meta.id };
+    const bodies = [];
+    const fetchImpl = vi.fn(async (_url, init) => {
+      bodies.push(JSON.parse(init.body));
+      return sse([{ candidates: [{ content: { parts: [{ text: "Twenty." }] }, finishReason: "STOP" }] }]);
+    });
+    const app = createApp({ fetchImpl, largeFiles });
+
+    await request(app).post("/api/chat/stream").send(chatBody(meta.id, { messages: [
+      { role: "user", content: "Here is the log.", files: [document] },
+      { role: "assistant", content: "Got it." },
+      { role: "user", content: "How many deadlocks happened?" },
+    ] }));
+    const followUp = bodies[0].contents;
+    expect(followUp).toHaveLength(3);
+    // Every engine sends the card exactly once, and the model still knows where the file was attached.
+    expect(followUp.map(turnText).join("\n").match(/--- Large attached file: app\.log ---/g)).toHaveLength(1);
+    expect(turnText(followUp[0])).toContain("app.log");
+    expect(turnText(followUp[2])).toContain("How many deadlocks happened?");
+
+    await request(app).post("/api/chat/stream").send(chatBody(meta.id, { messages: [{ role: "user", content: "", files: [document] }] }));
+    const onlyFile = bodies[1].contents[0];
+    expect(onlyFile.parts.every((part) => typeof part.text !== "string" || part.text.trim())).toBe(true);
+    expect(turnText(onlyFile)).toContain("--- Large attached file: app.log ---");
+    if (engine === "npm") expect(turnText(followUp[0])).toContain("(Attached file: app.log. Its text or summary card is with my latest message.)");
   });
 });
