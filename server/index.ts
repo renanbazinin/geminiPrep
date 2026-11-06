@@ -5,6 +5,12 @@ import express from "express";
 import { createApp } from "./app.js";
 import { createServerLargeFiles } from "./documents/config.js";
 
+// K_SERVICE is set on Cloud Run: never serve the app publicly without its password.
+if (process.env.K_SERVICE && !process.env.APP_PASSWORD?.trim()) {
+  console.error("APP_PASSWORD is required when running on Cloud Run. Refusing to start.");
+  process.exit(1);
+}
+
 const largeFiles = createServerLargeFiles();
 const app = createApp({ largeFiles });
 // Expired uploads are also skipped on read; sweeping just reclaims the disk space.

@@ -12,7 +12,8 @@
     "test:watch": "vitest",
     "check:special-group": "tsx scripts/special-group-live-check.ts",
     "check:gemini-4": "tsx scripts/gemini-4-live-check.ts",
-    "check:interactions-tools": "tsx scripts/interactions-tools-live-check.ts"
+    "check:interactions-tools": "tsx scripts/interactions-tools-live-check.ts",
+    "deploy:gcp": "tsx scripts/deploy-cloud-run.ts"
   },
   "dependencies": {
     "cors": "^2.8.5",

@@ -1,0 +1,6 @@
+# Files left out of the source upload for `gcloud run deploy --source`.
+.gcloudignore
+.git
+.gitignore
+.claude/
+#!include:.gitignore
