@@ -100,6 +100,10 @@ function stepSummary(label: string, result: ToolResult): string {
  * runs (Generate Content or Interactions). Otherwise the model gets search/read tools and a
  * streaming Generate Content tool loop runs: askGemini from llm-large-files on the npm engine,
  * or this file's own loop on the original engine.
+ *
+ * A PDF whose file is kept (npm engine) also gets that loop when its text fits: its text does not
+ * hold its pictures, and the loop gives the model view_pages to look at the pages themselves.
+ * This happens only in a plain Generate Content chat: see `looks` below.
  */
 export async function proxyDocumentChat(options: {
   request: ChatStreamRequest;
@@ -110,7 +114,9 @@ export async function proxyDocumentChat(options: {
   signal?: AbortSignal;
 }): Promise<void> {
   const { request, response, largeFiles } = options;
-  const prepared = await largeFiles.files.prepare(documentIds(request), baseRequestSize(request));
+  const ids = documentIds(request);
+  const base = baseRequestSize(request);
+  const prepared = await largeFiles.files.prepare(ids, base);
   if (prepared.missing.length) {
     const names = request.messages.flatMap((message) => message.files ?? [])
       .filter((file) => file.kind === "document" && prepared.missing.includes(file.documentId))
@@ -121,8 +127,16 @@ export async function proxyDocumentChat(options: {
     return;
   }
   const materialized = materializeDocuments(request, prepared.blocks);
-  // Everything fits, or the image model is answering (it cannot call tools): use the normal path.
-  if (prepared.plan.searchable.length === 0 || request.tool === "image") {
+  const searches = prepared.plan.searchable.length > 0;
+  // Everything fits. Does a PDF among the files have pages to look at? The loop runs on Generate
+  // Content and declares only the document tools, so it is not used where the user chose
+  // something it would drop: the image or graph tool, or the Interactions API with its options.
+  // Those answer as before, from the text alone.
+  const looks = !searches && largeFiles.engine === "npm" && !request.tool && !request.interactions
+    && resolveLargeFilesSettings().keepPdfs
+    && (await largeFiles.files.prepare(ids, base, { viewPages: true })).viewable.length > 0;
+  // Nothing to search or to look at, or the image model is answering (it cannot call tools): use the normal path.
+  if ((!searches && !looks) || request.tool === "image") {
     await proxyChatStream({ ...options, request: materialized });
     return;
   }

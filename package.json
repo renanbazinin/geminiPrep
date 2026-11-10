@@ -12,9 +12,11 @@
     "test:watch": "vitest",
     "check:special-group": "tsx scripts/special-group-live-check.ts",
     "check:gemini-4": "tsx scripts/gemini-4-live-check.ts",
-    "check:interactions-tools": "tsx scripts/interactions-tools-live-check.ts"
+    "check:interactions-tools": "tsx scripts/interactions-tools-live-check.ts",
+    "check:large-files-pages": "tsx scripts/large-files-pages-live-check.ts"
   },
   "dependencies": {
+    "@cantoo/pdf-lib": "^2.11.1",
     "cors": "^2.8.5",
     "dotenv": "^16.6.1",
     "express": "^4.21.2",

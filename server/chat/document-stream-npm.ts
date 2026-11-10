@@ -22,18 +22,19 @@ function documentIds(request: ChatStreamRequest): string[] {
 }
 
 /**
- * Takes the document references out of the history. askGemini adds each file's text or card to the
- * latest message, so a file attached earlier leaves a short note where it was.
+ * Takes the document references out of the history. askGemini puts each file's text or card at the
+ * start of the first user message, where it stays as the conversation grows (so Gemini's prompt
+ * cache can reuse it). A file attached in a later message leaves a short note where it was.
  */
 export function withoutDocuments(request: ChatStreamRequest): ChatStreamRequest {
-  const last = request.messages.length - 1;
+  const first = request.messages.findIndex((message) => message.role === "user");
   return {
     ...request,
     messages: request.messages.map((message, index) => {
       const documents = (message.files ?? []).filter((file) => file.kind === "document");
       if (documents.length === 0) return message;
       const rest = (message.files ?? []).filter((file) => file.kind !== "document");
-      const notes = index === last ? [] : documents.map((file) => `(Attached file: ${file.name}. Its text or summary card is with my latest message.)`);
+      const notes = index === first ? [] : documents.map((file) => `(Attached file: ${file.name}. Its text or summary card is at the start of this conversation.)`);
       return {
         role: message.role,
         content: [message.content, ...notes].filter((text) => text.trim()).join("\n\n"),
@@ -66,9 +67,10 @@ export async function streamWithPackage(options: {
   // Only the document tools, which askGemini declares: an image or diagram specialist could not see what they found.
   delete body.tools;
   delete body.toolConfig;
-  // A message that was only a file has an empty text part; askGemini adds the file's text after it.
-  const latest = body.contents.at(-1);
-  if (latest) latest.parts = latest.parts.filter((part) => !(Object.keys(part).length === 1 && typeof part.text === "string" && !part.text.trim()));
+  // A message that was only a file has an empty text part, which Gemini refuses. In the first user
+  // message askGemini puts the text of the files in its place; a later one holds the note above.
+  const first = body.contents.find((content) => content.role === "user");
+  if (first) first.parts = first.parts.filter((part) => !(Object.keys(part).length === 1 && typeof part.text === "string" && !part.text.trim()));
 
   const send = (event: ChatStreamEvent) => {
     if (!signal?.aborted && !response.writableEnded) response.write(`event: ${event.event}\ndata: ${JSON.stringify(event.data)}\n\n`);
@@ -85,6 +87,7 @@ export async function streamWithPackage(options: {
   } });
 
   const gemini4 = isGemini4Model(request.model);
+  const settings = resolveLargeFilesSettings();
   let textCharacters = 0;
   let deltaCount = 0;
   let firstTokenMs: number | undefined;
@@ -96,7 +99,11 @@ export async function streamWithPackage(options: {
       contents: body.contents,
       system: body.systemInstruction?.parts?.map((part) => part.text ?? "").join("\n") || undefined,
       ...(body.generationConfig ? { generationConfig: body.generationConfig } : {}),
-      maxToolTurns: resolveLargeFilesSettings().maxToolTurns,
+      // The most requests for one answer, the last of them without tools.
+      maxToolTurns: settings.maxToolTurns,
+      // view_pages: the model asks for pages of a kept PDF and gets them as a small PDF.
+      viewPages: settings.keepPdfs,
+      toolFilePlacement: settings.pagePlacement,
       analysisConfig: (maxOutputTokens) => ({
         ...(gemini4 ? {} : { temperature: 0.2 }),
         maxOutputTokens: gemini4 ? gemini4OutputTokens(maxOutputTokens) : maxOutputTokens,
@@ -116,8 +123,13 @@ export async function streamWithPackage(options: {
     if (process.env.LARGE_FILES_DEBUG === "1") {
       console.log(`[large-files npm] turns=${result.turns} steps=${result.steps.length} text=${result.text.length} finish=${result.finishReason ?? "?"} usage=${JSON.stringify(result.usage)}`);
     }
-    if (!result.text.trim()) {
-      send({ event: "delta", data: { text: `The model finished without an answer${result.finishReason ? ` (${result.finishReason})` : ""}. Try asking more specifically.` } });
+    // No answer: the prompt was blocked, or the last turn came back empty. Text from before a tool
+    // call ("Let me check…") may already be on screen; it is not the answer.
+    if (!result.answered) {
+      const reason = result.blockReason
+        ? `The request was blocked (${result.blockReason}).`
+        : `The model finished without an answer${result.finishReason ? ` (${result.finishReason})` : ""}. Try asking more specifically.`;
+      send({ event: "delta", data: { text: `${result.text.trim() ? "\n\n" : ""}${reason}` } });
     }
     send({ event: "done", data: {
       ...(result.finishReason ? { finishReason: result.finishReason } : {}),

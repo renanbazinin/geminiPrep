@@ -1,9 +1,11 @@
+import { readdir, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import {
   createLargeFiles as createPackageLargeFiles,
   FileDocumentStore as PackageFileDocumentStore,
   type LargeFiles as PackageLargeFiles,
 } from "llm-large-files";
+import type { GeminiToolFilePlacement } from "llm-large-files/gemini";
 import type { LargeFilesConfig } from "../../shared/contracts.js";
 import {
   createLargeFiles as createOriginalLargeFiles,
@@ -34,6 +36,27 @@ function positive(name: string, fallback: number): number {
   return Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
+/** A yes/no setting. Unset keeps the fallback; "0", "false", "off" and "no" turn it off. */
+function enabled(name: string, fallback: boolean): boolean {
+  const raw = process.env[name]?.trim().toLowerCase();
+  if (!raw) return fallback;
+  return !["0", "false", "off", "no"].includes(raw);
+}
+
+/**
+ * LARGE_FILES_PAGE_PLACEMENT: where the pages of a PDF go in the request when the model asks to
+ * look at them. "inside" (the default) puts them in the function response itself, which Gemini 3
+ * models read on Vertex AI and on the Gemini API. "beside" sends them as parts next to it: Vertex
+ * AI refuses that for Gemini 3 models (HTTP 400), while Gemini 2.5 on Vertex AI sees pages only
+ * that way. Measured with scripts/large-files-pages-live-check.ts in November 2026.
+ */
+export function resolvePagePlacement(): GeminiToolFilePlacement {
+  const raw = process.env.LARGE_FILES_PAGE_PLACEMENT?.trim().toLowerCase();
+  if (!raw) return "inside";
+  if (raw === "inside" || raw === "beside") return raw;
+  throw new Error(`LARGE_FILES_PAGE_PLACEMENT must be "inside" or "beside", not "${process.env.LARGE_FILES_PAGE_PLACEMENT}".`);
+}
+
 /** LARGE_FILES_ENGINE: "npm" (the default) or "original". Any other value is a startup error. */
 export function resolveLargeFilesEngine(): LargeFilesEngine {
   const raw = process.env.LARGE_FILES_ENGINE?.trim().toLowerCase();
@@ -50,8 +73,15 @@ export function resolveLargeFilesSettings() {
     maxUploadBytes: Math.round(positive("LARGE_FILES_MAX_UPLOAD_MB", 100) * MB),
     serverThresholdBytes: Math.round(positive("LARGE_FILES_SERVER_THRESHOLD_KB", 512) * 1024),
     pdfInlineMaxBytes: Math.round(positive("LARGE_FILES_PDF_INLINE_MAX_MB", 7) * MB),
-    /** Model turns that may call tools in one answer, before a final tool-free turn. */
+    /** The limit on tool use in one answer: after one round of tool calls fewer than this, the model must answer without tools. */
     maxToolTurns: Math.max(1, Math.round(positive("LARGE_FILES_MAX_TOOL_TURNS", 12))),
+    /**
+     * Keep each uploaded PDF next to its text, so the model can look at its pages (pictures,
+     * charts, scans). On by default. Only the npm engine does this. A kept PDF takes as much disk
+     * as the upload until it expires.
+     */
+    keepPdfs: enabled("LARGE_FILES_KEEP_PDFS", true),
+    pagePlacement: resolvePagePlacement(),
     budget: {
       contextTokens: positive("LARGE_FILES_CONTEXT_TOKENS", DEFAULT_BUDGET.contextTokens),
       maxRequestBytes: positive("LARGE_FILES_MAX_REQUEST_BYTES", DEFAULT_BUDGET.maxRequestBytes),
@@ -84,8 +114,38 @@ export function createServerLargeFiles(engine: LargeFilesEngine = resolveLargeFi
     budget: settings.budget,
   };
   return engine === "npm"
-    ? { engine, files: createPackageLargeFiles({ ...options, store: new PackageFileDocumentStore(settings.directory) }) }
+    ? { engine, files: createPackageLargeFiles({ ...options, store: new PackageFileDocumentStore(settings.directory), keepOriginals: settings.keepPdfs ? ["pdf"] : [] }) }
     : { engine, files: createOriginalLargeFiles({ ...options, store: new OriginalFileDocumentStore(settings.directory) }) };
+}
+
+const ORIGINAL_FILE = /^(doc_[a-f0-9]{32})\.bin$/;
+/** A kept PDF is written before the rest of its document, so one that is this young may still be on its way in. */
+const ORPHAN_AGE_MS = 60 * 60 * 1000;
+
+/**
+ * Removes kept PDFs (`<id>.bin`) whose document is gone, and returns how many. The npm engine
+ * removes a kept PDF with its document. The original engine does not know these files: a document
+ * that expires or is deleted while it runs leaves its PDF behind, up to the upload limit each.
+ */
+export async function removeOrphanOriginals(directory = resolveLargeFilesSettings().directory, now = Date.now()): Promise<number> {
+  let entries: string[];
+  try {
+    entries = await readdir(directory);
+  } catch {
+    return 0;
+  }
+  const present = new Set(entries);
+  let removed = 0;
+  for (const entry of entries) {
+    const id = ORIGINAL_FILE.exec(entry)?.[1];
+    if (!id || present.has(`${id}.json`)) continue;
+    const file = path.join(directory, entry);
+    const modified = await stat(file).then((info) => info.mtimeMs, () => undefined);
+    if (modified === undefined || now - modified < ORPHAN_AGE_MS) continue;
+    await rm(file, { force: true });
+    removed++;
+  }
+  return removed;
 }
 
 export function describeLargeFilesEngine(engine: LargeFilesEngine): string {

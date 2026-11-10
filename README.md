@@ -51,6 +51,20 @@ a summary card plus tools to search, read line ranges, or read the whole file in
 Gemini took appear under its answer. Limits are set with the `LARGE_FILES_*` variables in
 `.env.example`.
 
+**Pictures in large PDFs.** The text of a PDF does not hold its pictures. With the npm engine the
+server keeps each uploaded PDF next to its text until it expires, marks the pages that show a
+picture, and gives Gemini a `view_pages` tool: Gemini asks for up to five pages and gets them as a
+small PDF, so it can read a chart, a photo, or a scanned page. A scanned PDF with no text is
+accepted up to 30 pages. Each look is one of the steps under the answer, for example
+`Look at report.pdf pages 12-14`, and costs about 530 tokens a page.
+
+Page views run in a Generate Content chat with no image or graph tool picked. With the
+Interactions API, or with a tool picked, a PDF that fits is read from its text alone, as before.
+While a chat holds a PDF that Gemini can look at, Gemini does not hand a turn to the image or
+graph tool by itself (the same as for a file it has to search): pick the tool yourself.
+`LARGE_FILES_KEEP_PDFS=0` turns page views off. `npm run check:large-files-pages` asks Vertex AI
+and the Gemini API questions that only the pictures of a PDF answer.
+
 The logic comes from the [`llm-large-files`](https://www.npmjs.com/package/llm-large-files) npm
 package by default. `LARGE_FILES_ENGINE` picks the implementation:
 
