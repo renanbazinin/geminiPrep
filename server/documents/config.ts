@@ -46,9 +46,9 @@ function enabled(name: string, fallback: boolean): boolean {
 /**
  * LARGE_FILES_PAGE_PLACEMENT: where the pages of a PDF go in the request when the model asks to
  * look at them. "inside" (the default) puts them in the function response itself, which Gemini 3
- * models read on Vertex AI and on the Gemini API. "beside" sends them as parts next to it: Vertex
- * AI refuses that for Gemini 3 models (HTTP 400), while Gemini 2.5 on Vertex AI sees pages only
- * that way. Measured with scripts/large-files-pages-live-check.ts in November 2026.
+ * models read. "beside" sends them in a user turn of their own, after the function responses:
+ * Gemini 2.5 sees pages only that way. Both work for Gemini 3.5 on Vertex AI and on the Gemini
+ * API (scripts/large-files-pages-live-check.ts, November 2026).
  */
 export function resolvePagePlacement(): GeminiToolFilePlacement {
   const raw = process.env.LARGE_FILES_PAGE_PLACEMENT?.trim().toLowerCase();

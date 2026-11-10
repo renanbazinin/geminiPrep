@@ -5,18 +5,19 @@
 //   npm run check:large-files-pages -- vertex    # only Vertex AI
 //   npm run check:large-files-pages -- gemini    # only the Gemini Developer API
 //
-// Each provider answers with the pages inside the function response, as the app sends them, and
-// once with the PDF treated as too large to send whole. The same questions are then asked with the
-// pages beside the function response (LARGE_FILES_PAGE_PLACEMENT=beside), to show what that
-// setting would do: Vertex AI refuses it for Gemini 3 models, so those runs only report.
+// Each provider answers five kinds of question (one look, two looks in one turn, one look after
+// another, the closing request without tools, and a PDF that is searched), first with the pages
+// inside the function response, as the app sends them, and then with the pages beside the function
+// responses (LARGE_FILES_PAGE_PLACEMENT=beside).
 // Model: CHECK_MODEL (default gemini-3.5-flash-lite). Vertex region: CHECK_REGION (default global).
 // CHECK_THINKING=none leaves the thinking level out, which Gemini 2.5 needs.
+// CHECK_ONLY=closing runs only the questions whose title holds that text.
 // CHECK_PDF and CHECK_QUESTION ask your own question about your own PDF instead; CHECK_EXPECT is
 // text the answer should hold.
 //
-// About 15 small, billable requests per provider. Credentials are never printed.
+// About 25 small, billable requests per provider. Credentials are never printed.
 // Lines marked "·" report what the model did or said and never fail the run: a cheap model can
-// look at the right page and still misread it.
+// look at the right page and still misread it, and Gemini 2.5 does not see pages sent inside.
 
 import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
@@ -39,6 +40,7 @@ const directory = await mkdtemp(path.join(tmpdir(), "gemini-prep-pages-check-"))
 process.env.LARGE_FILES_DIR = directory;
 delete process.env.LARGE_FILES_KEEP_PDFS;
 delete process.env.LARGE_FILES_INLINE_TOKENS;
+delete process.env.LARGE_FILES_MAX_TOOL_TURNS;
 
 // After the settings: the server reads them from the environment.
 const { createApp } = await import("../server/app.js");
@@ -171,18 +173,28 @@ async function serve(recording: typeof fetch) {
   return { base, close: () => new Promise<void>((resolve) => server.close(() => resolve())) };
 }
 
-type Scenario = { title: string; placement: "inside" | "beside"; question: string; expect: Array<[string, RegExp]>; looksNeeded: number; searches?: boolean };
+type Placement = "inside" | "beside";
+type Kind = {
+  title: string;
+  question: string;
+  expect: Array<[string, RegExp]>;
+  looksNeeded: number;
+  /** Treat the PDF as too large to send whole, so it is searched. */
+  searches?: boolean;
+  /** LARGE_FILES_MAX_TOOL_TURNS for this question. 2 leaves one request with tools and the closing one. */
+  maxToolTurns?: number;
+};
+type Scenario = Kind & { placement: Placement };
 
 async function runScenario(provider: ProviderId, region: string | undefined, documentId: string, name: string, scenario: Scenario) {
   console.log(`\n  ${scenario.title}`);
-  // The app sends pages inside the function response. The other placement is shown, not required.
-  const required = scenario.placement === "inside";
-  const fail = required ? failed : info;
-  const check = (passed: boolean, message: string, detail = "") => passed ? ok(message) : fail(`${message}${detail ? ` — ${detail}` : ""}`);
+  const check = (passed: boolean, message: string, detail = "") => passed ? ok(message) : failed(`${message}${detail ? ` — ${detail}` : ""}`);
   process.env.LARGE_FILES_PAGE_PLACEMENT = scenario.placement;
   // The budget is read when the library is created: a tiny one makes the PDF "too large to send whole".
   if (scenario.searches) process.env.LARGE_FILES_INLINE_TOKENS = "100";
   else delete process.env.LARGE_FILES_INLINE_TOKENS;
+  if (scenario.maxToolTurns) process.env.LARGE_FILES_MAX_TOOL_TURNS = String(scenario.maxToolTurns);
+  else delete process.env.LARGE_FILES_MAX_TOOL_TURNS;
   const record = recorder();
   const app = await serve(record.fetch);
   let events: StreamEvent[] = [];
@@ -204,7 +216,7 @@ async function runScenario(provider: ProviderId, region: string | undefined, doc
     status = response.status;
     const text = await response.text();
     if (status !== 200) {
-      fail(`the chat was refused: HTTP ${status} ${oneLine(text)}`);
+      failed(`the chat was refused: HTTP ${status} ${oneLine(text)}`);
       return;
     }
     events = parseEvents(text);
@@ -215,9 +227,16 @@ async function runScenario(provider: ProviderId, region: string | undefined, doc
   const error = events.find((event) => event.event === "error");
   const statuses = record.calls.map((call) => call.status);
   if (error) {
-    fail(`the chat ended with an error after ${record.calls.length} model requests (HTTP ${statuses.join(", ")}): ${oneLine(String(error.data.message), 400)}`);
+    failed(`the chat ended with an error after ${record.calls.length} model requests (HTTP ${statuses.join(", ")}): ${oneLine(String(error.data.message), 400)}`);
   } else {
     check(events.at(-1)?.event === "done" && statuses.every((code) => code === 200), `the chat finished: ${record.calls.length} model requests, HTTP ${statuses.join(", ")}`);
+    if (scenario.maxToolTurns) {
+      const last = record.calls.at(-1)?.body;
+      const closing = (last?.contents?.at(-1)?.parts ?? []).map((part: Json) => part.text ?? "").join("");
+      check(record.calls.length === scenario.maxToolTurns && !last?.tools && /^Stop using tools now/.test(closing),
+        "the last request declared no tools and asked for the answer",
+        `${record.calls.length} requests; tools in the last one: ${last?.tools ? "yes" : "no"}`);
+    }
   }
 
   // What the app sent: the last request holds the whole exchange.
@@ -240,14 +259,16 @@ async function runScenario(provider: ProviderId, region: string | undefined, doc
   const looks = steps.filter((step) => step.startsWith(`Look at ${name}`));
 
   if (shown.length === 0) {
-    fail(`the model never looked at a page, so this run checked nothing (steps: ${steps.join("; ") || "none"})`);
+    failed(`the model never looked at a page, so this run checked nothing (steps: ${steps.join("; ") || "none"})`);
   } else {
     ok(`looks shown as steps: ${looks.map((step) => `"${step}"`).join(", ")}`);
     const files = scenario.placement === "inside" ? inside : beside;
     const bytes = files.reduce((sum, part) => sum + Math.floor(String(part.inlineData.data).length * 3 / 4), 0);
-    check(files.length === shown.length && (scenario.placement === "inside" ? beside : inside).length === 0,
-      `the pages went ${scenario.placement} the function response: ${files.length} PDF${files.length === 1 ? "" : "s"}, ${count(bytes)} bytes`,
-      `${inside.length} inside, ${beside.length} beside, for ${shown.length} looks`);
+    // Beside means a turn of their own: Vertex AI refuses a turn in which anything follows a function response.
+    const mixed = contents.filter((content) => (content.parts as Json[]).some((part) => part.functionResponse) && (content.parts as Json[]).some((part) => !part.functionResponse)).length;
+    check(files.length === shown.length && (scenario.placement === "inside" ? beside : inside).length === 0 && mixed === 0,
+      `the pages went ${scenario.placement === "inside" ? "inside the function response" : "in a turn of their own, after the function responses"}: ${files.length} PDF${files.length === 1 ? "" : "s"}, ${count(bytes)} bytes`,
+      `${inside.length} inside, ${beside.length} beside, for ${shown.length} looks; turns that mix function responses with other parts: ${mixed}`);
     info(turns.some((looksInTurn) => looksInTurn > 1)
       ? `looks per model turn: ${turns.join(", ")} (more than one look in a single turn)`
       : `looks per model turn: ${turns.join(", ")}`);
@@ -311,23 +332,31 @@ async function runProvider(provider: ProviderId) {
 
   const chart = "Which region has the tallest bar in Figure 1 of the report? Answer with the name of the region.";
   const both = "Two things from the report: which region has the tallest bar in Figure 1, and what colour is the disc on the sign in Figure 2?";
+  const chain = "Find the tallest bar in Figure 1 of the report. If it is North, look at page 5; if South, page 10; if East, page 7; if West, page 12. What does that page show?";
   const south: [string, RegExp] = ["the tallest bar is South", /\bsouth\b/i];
   const purple: [string, RegExp] = ["the disc is purple", /purple|violet|magenta/i];
   const wanted = process.env.CHECK_EXPECT;
-  const scenarios: Scenario[] = own
-    ? (["inside", "beside"] as const).map((placement) => ({
-        title: `Your question, pages ${placement} the function response`, placement, looksNeeded: 1,
+  const kinds: Kind[] = own
+    ? [{
+        title: "Your question", looksNeeded: 1,
         question: process.env.CHECK_QUESTION ?? "What do the pictures in this file show?",
-        expect: wanted ? [[`the answer holds "${wanted}"`, new RegExp(wanted.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i")] as [string, RegExp]] : [],
-      }))
+        expect: wanted ? [[`the answer holds "${wanted}"`, new RegExp(wanted.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i")]] : [],
+      }]
     : [
-        { title: "One figure", placement: "inside", question: chart, expect: [south], looksNeeded: 1 },
-        { title: "Two figures seven pages apart", placement: "inside", question: both, expect: [south, purple], looksNeeded: 2 },
-        { title: "A PDF too large to send whole: search, then look", placement: "inside", question: chart, expect: [south], looksNeeded: 1, searches: true },
-        { title: "One figure, pages beside the function response", placement: "beside", question: chart, expect: [south], looksNeeded: 1 },
-        { title: "Two figures seven pages apart, pages beside the function response", placement: "beside", question: both, expect: [south, purple], looksNeeded: 2 },
+        { title: "One figure", question: chart, expect: [south], looksNeeded: 1 },
+        { title: "Two figures seven pages apart", question: both, expect: [south, purple], looksNeeded: 2 },
+        // Only the chart says which page comes next, so the second look follows the first.
+        { title: "One look decides the next", question: chain, expect: [purple], looksNeeded: 2 },
+        { title: "Out of tool turns after one look: the closing request", question: chart, expect: [south], looksNeeded: 1, maxToolTurns: 2 },
+        { title: "A PDF too large to send whole: search, then look", question: chart, expect: [south], looksNeeded: 1, searches: true },
       ];
-  for (const scenario of scenarios) await runScenario(provider, region, uploaded.id, name, scenario);
+  const only = process.env.CHECK_ONLY?.toLowerCase();
+  for (const placement of ["inside", "beside"] as const) {
+    console.log(`\n Pages ${placement === "inside" ? "inside the function response (the app's default)" : "beside the function responses (LARGE_FILES_PAGE_PLACEMENT=beside)"}`);
+    for (const kind of kinds) {
+      if (!only || kind.title.toLowerCase().includes(only)) await runScenario(provider, region, uploaded.id, name, { ...kind, placement });
+    }
+  }
 }
 
 try {

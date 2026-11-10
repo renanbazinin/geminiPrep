@@ -414,7 +414,7 @@ describe("pages of a kept PDF (npm engine)", () => {
     expect(streamed.at(-1)).toMatchObject({ event: "done", data: { finishReason: "STOP" } });
   });
 
-  it("sends the pages next to the function response when LARGE_FILES_PAGE_PLACEMENT is beside", async () => {
+  it("sends the pages in a turn of their own when LARGE_FILES_PAGE_PLACEMENT is beside", async () => {
     vi.stubEnv("LARGE_FILES_PAGE_PLACEMENT", "beside");
     const largeFiles = createServerLargeFiles("npm");
     const bodies = [];
@@ -424,10 +424,14 @@ describe("pages of a kept PDF (npm engine)", () => {
     fetchImpl.mockImplementation(lookThenAnswer(meta.id, bodies));
     await request(app).post("/api/chat/stream").send(reportBody(meta.id));
 
-    const answer = bodies[1].contents.at(-1);
-    expect(answer.parts[0].functionResponse.name).toBe("view_pages");
+    // The function response alone in its turn (Vertex AI refuses anything after one), then the pages.
+    const [answer, pages] = bodies[1].contents.slice(-2);
+    expect(answer.parts).toHaveLength(1);
+    expect(answer.parts[0].functionResponse).toMatchObject({ name: "view_pages", response: { pages: "2-3", file: "pages-2-3.pdf" } });
     expect(answer.parts[0].functionResponse.parts).toBeUndefined();
-    expect(answer.parts.filter((part) => part.inlineData).map((part) => part.inlineData.mimeType)).toEqual(["application/pdf"]);
+    expect(pages.role).toBe("user");
+    expect(pages.parts[0]).toEqual({ text: "pages-2-3.pdf (returned by view_pages):" });
+    expect(pages.parts.filter((part) => part.inlineData).map((part) => part.inlineData.mimeType)).toEqual(["application/pdf"]);
   });
 
   it("refuses an unknown page placement", () => {
