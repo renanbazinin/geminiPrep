@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import express from "express";
 import { createApp } from "./app.js";
-import { createServerLargeFiles } from "./documents/config.js";
+import { createServerLargeFiles, describeLargeFilesEngine, removeOrphanOriginals, resolveLargeFilesSettings } from "./documents/config.js";
 
 // K_SERVICE is set on Cloud Run: never serve the app publicly without its password.
 if (process.env.K_SERVICE && !process.env.APP_PASSWORD?.trim()) {
@@ -13,8 +13,15 @@ if (process.env.K_SERVICE && !process.env.APP_PASSWORD?.trim()) {
 
 const largeFiles = createServerLargeFiles();
 const app = createApp({ largeFiles });
-// Expired uploads are also skipped on read; sweeping just reclaims the disk space.
-const sweep = () => void largeFiles.sweep().catch((error) => console.warn("Large-file cleanup failed:", error));
+console.log(`Large files: ${describeLargeFilesEngine(largeFiles.engine)} (LARGE_FILES_ENGINE=${largeFiles.engine})`);
+if (largeFiles.engine === "npm" && resolveLargeFilesSettings().keepPdfs) {
+  console.log("Large files: uploaded PDFs are kept until they expire, so Gemini can look at their pages (LARGE_FILES_KEEP_PDFS=0 turns this off).");
+}
+// Expired uploads are also skipped on read; sweeping just reclaims the disk space. A kept PDF goes
+// with its document; one that lost its document some other way is removed separately.
+const sweep = () => void largeFiles.files.sweep()
+  .then(() => removeOrphanOriginals())
+  .catch((error) => console.warn("Large-file cleanup failed:", error));
 sweep();
 setInterval(sweep, 60 * 60 * 1000).unref();
 const distPath = path.resolve(process.cwd(), "dist");

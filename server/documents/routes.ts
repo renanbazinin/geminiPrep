@@ -1,6 +1,8 @@
 import express, { type ErrorRequestHandler } from "express";
+import { createDocumentHandlers } from "llm-large-files/node";
 import type { DocumentUploadResult } from "../../shared/contracts.js";
 import type { DocumentMeta, LargeFiles } from "../../packages/large-files/src/index.js";
+import type { ServerLargeFiles } from "./config.js";
 
 export function toUploadResult(meta: DocumentMeta): DocumentUploadResult {
   return {
@@ -30,7 +32,27 @@ function headerText(value: string | string[] | undefined): string {
  * Upload, inspect, and delete large files. Mount before `express.json()` so JSON files arrive
  * as raw bytes. The body is the file itself; X-File-Name and X-File-Type describe it.
  */
-export function documentRoutes(largeFiles: LargeFiles) {
+export function documentRoutes(largeFiles: ServerLargeFiles) {
+  return largeFiles.engine === "npm" ? packageRoutes(largeFiles.files) : originalRoutes(largeFiles.files);
+}
+
+/** The npm engine: llm-large-files' own handlers, which read the raw body themselves. */
+function packageRoutes(files: Extract<ServerLargeFiles, { engine: "npm" }>["files"]) {
+  const handlers = createDocumentHandlers(files);
+  const router = express.Router();
+  router.post("/", (req, res, next) => {
+    handlers.upload(req, res).catch(next);
+  });
+  router.get("/:id", (req, res, next) => {
+    handlers.get(req, res, req.params.id).catch(next);
+  });
+  router.delete("/:id", (req, res, next) => {
+    handlers.remove(req, res, req.params.id).catch(next);
+  });
+  return router;
+}
+
+function originalRoutes(largeFiles: LargeFiles) {
   const router = express.Router();
 
   router.post("/", express.raw({ type: () => true, limit: largeFiles.maxUploadBytes }), async (req, res) => {
