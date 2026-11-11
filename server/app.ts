@@ -24,9 +24,8 @@ import {
 import { getVertexAccessToken } from "./vertex-auth.js";
 import { proxyChatStream } from "./chat/stream.js";
 import { hasDocumentParts, proxyDocumentChat } from "./chat/document-stream.js";
-import { createServerLargeFiles } from "./documents/config.js";
+import { createServerLargeFiles, type ServerLargeFiles } from "./documents/config.js";
 import { documentRoutes } from "./documents/routes.js";
-import type { LargeFiles } from "../packages/large-files/src/index.js";
 import { validateChatRequest } from "./chat/validation.js";
 import {
   CACHE_DEFAULT_TTL_SECONDS,
@@ -47,7 +46,8 @@ import {
 export function createApp(options: {
   fetchImpl?: typeof fetch;
   getAccessToken?: () => Promise<string>;
-  largeFiles?: LargeFiles;
+  /** Defaults to the engine in LARGE_FILES_ENGINE. */
+  largeFiles?: ServerLargeFiles;
 } = {}) {
   const app = express();
   const getCacheAccessToken = options.getAccessToken ?? getVertexAccessToken;

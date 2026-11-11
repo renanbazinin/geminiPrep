@@ -1,4 +1,8 @@
-# llm-large-files (working name)
+# llm-large-files (original in-repo copy)
+
+> This is the code the [`llm-large-files`](https://www.npmjs.com/package/llm-large-files) npm
+> package was extracted from. The app uses the npm package by default; this copy runs only with
+> `LARGE_FILES_ENGINE=original`, for comparison.
 
 Make books, logs, and other oversized files usable by an LLM that has a **request-size limit**
 (for example a 10 MB enterprise connector) and a **context window** (for example 1M tokens).
