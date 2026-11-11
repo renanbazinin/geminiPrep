@@ -86,19 +86,38 @@ export async function streamWithPackage(options: {
     providerRequest: describeUpstreamRequest({ url: upstream.url, init: { ...upstream.init, body: JSON.stringify(body) } }),
   } });
 
-  const gemini4 = isGemini4Model(request.model);
   const settings = resolveLargeFilesSettings();
+  // LARGE_FILES_EXPLORER_MODEL: a second model does the searching and reading, and the model
+  // picked in the chat writes the answer. It is reached the way the picked model is: the same
+  // provider, region and credentials. Naming the picked model itself is naming none.
+  const explorerModel = settings.explorerModel && settings.explorerModel !== request.model ? settings.explorerModel : undefined;
+  const explorer = explorerModel
+    ? createUpstreamRequest({ request: { ...request, model: explorerModel, messages: [] }, project, vertexToken, geminiApiKey: process.env.GEMINI_API_KEY })
+    : undefined;
+  // Its settings are the chat's, worked out for that model (Gemini 4 takes no temperature, for one).
+  const explorerConfig = explorer ? (JSON.parse(explorer.init.body as string) as UpstreamBody).generationConfig : undefined;
+  // Gemini 2.5 refuses a thinking level: HTTP 400, "thinking_level is not supported by this model".
+  const explorerTakesNoLevel = explorerModel !== undefined && /^gemini-2\./.test(explorerModel);
+  if (explorerConfig && explorerTakesNoLevel) delete explorerConfig.thinkingConfig;
+  // A whole file is read in parts by the explorer when there is one, so those settings are for it.
+  const gemini4 = isGemini4Model(explorerModel ?? request.model);
   let textCharacters = 0;
   let deltaCount = 0;
   let firstTokenMs: number | undefined;
   try {
     const result = await askGemini({
       files,
-      endpoint: { url: toGenerateContentUrl(upstream.url), streamUrl: upstream.url, headers },
+      endpoint: {
+        url: toGenerateContentUrl(upstream.url),
+        streamUrl: upstream.url,
+        headers,
+        ...(explorer ? { explorerUrl: toGenerateContentUrl(explorer.url) } : {}),
+      },
       documentIds: documentIds(request),
       contents: body.contents,
       system: body.systemInstruction?.parts?.map((part) => part.text ?? "").join("\n") || undefined,
       ...(body.generationConfig ? { generationConfig: body.generationConfig } : {}),
+      ...(explorerConfig ? { explorerGenerationConfig: explorerConfig } : {}),
       // The most requests for one answer, the last of them without tools.
       maxToolTurns: settings.maxToolTurns,
       // view_pages: the model asks for pages of a kept PDF and gets them as a small PDF.
@@ -107,7 +126,7 @@ export async function streamWithPackage(options: {
       analysisConfig: (maxOutputTokens) => ({
         ...(gemini4 ? {} : { temperature: 0.2 }),
         maxOutputTokens: gemini4 ? gemini4OutputTokens(maxOutputTokens) : maxOutputTokens,
-        ...(request.thinkingLevel ? { thinkingConfig: { thinkingLevel: "low" } } : {}),
+        ...(request.thinkingLevel && !explorerTakesNoLevel ? { thinkingConfig: { thinkingLevel: "low" } } : {}),
       }),
       onText: (text) => {
         deltaCount++;
@@ -121,7 +140,7 @@ export async function streamWithPackage(options: {
       ...(signal ? { signal } : {}),
     });
     if (process.env.LARGE_FILES_DEBUG === "1") {
-      console.log(`[large-files npm] turns=${result.turns} steps=${result.steps.length} text=${result.text.length} finish=${result.finishReason ?? "?"} usage=${JSON.stringify(result.usage)}`);
+      console.log(`[large-files npm] turns=${result.turns} steps=${result.steps.length} text=${result.text.length} finish=${result.finishReason ?? "?"}${explorerModel ? ` explorer=${explorerModel}` : ""} usage=${JSON.stringify(result.usage)}`);
     }
     // No answer: the prompt was blocked, or the last turn came back empty. Text from before a tool
     // call ("Let me check…") may already be on screen; it is not the answer.

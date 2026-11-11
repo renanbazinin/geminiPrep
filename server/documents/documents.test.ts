@@ -11,6 +11,7 @@ import { validateChatRequest } from "../chat/validation.js";
 import { createLargeFiles as createPackageLargeFiles, MemoryDocumentStore as PackageMemoryStore } from "llm-large-files";
 import { baseRequestSize, materializeDocuments } from "../chat/document-stream.js";
 import { createLargeFiles as createOriginalLargeFiles, MemoryDocumentStore as OriginalMemoryStore } from "../../packages/large-files/src/index.js";
+import { GEMINI_4_MIN_OUTPUT_TOKENS } from "../../shared/gemini-4.js";
 import { DEFAULT_INTERACTIONS } from "../../shared/interactions.js";
 import { createServerLargeFiles, removeOrphanOriginals, resolveLargeFilesEngine, resolvePagePlacement } from "./config.js";
 
@@ -312,6 +313,161 @@ function reportBody(documentId: string, extra = {}) {
     ...extra,
   });
 }
+
+describe("an explorer model (npm engine)", () => {
+  const previousKey = process.env.GEMINI_API_KEY;
+  const MODELS = "https://generativelanguage.googleapis.com/v1beta/models";
+  const picked = resolveGeminiChatModels()[0].id;
+  const ANSWER = "There were 20 deadlocks (app.log L250).";
+  beforeEach(() => {
+    process.env.GEMINI_API_KEY = "test-key";
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    if (previousKey === undefined) delete process.env.GEMINI_API_KEY;
+    else process.env.GEMINI_API_KEY = previousKey;
+  });
+
+  async function largeLog(budget = {}) {
+    const largeFiles = ENGINES[0].create({ budget: { inlineTokens: 1_000, ...budget } });
+    const meta = await largeFiles.files.ingest({ name: "app.log", bytes: new TextEncoder().encode(log(5_000)) });
+    return { largeFiles, meta };
+  }
+
+  const partRead = (body) => body.systemInstruction?.role === "system";
+  const explored = (body) => body.contents.some((content) => content.parts.some((part) => part.functionResponse));
+
+  /**
+   * Gemini as the app reaches it. Asked with tools, a model makes `call` once and then says
+   * `closing`. Asked without tools, it answers. A part of a whole-file read gets notes. A
+   * streaming URL is answered with a stream.
+   */
+  function gemini(calls, closing: string, call) {
+    return vi.fn(async (url, init) => {
+      const body = JSON.parse(init.body);
+      calls.push({ url: String(url), body });
+      const parts = partRead(body) ? [{ text: "Deadlocks on table orders (L250)." }]
+        : !body.tools ? [{ text: ANSWER }]
+          : explored(body) ? [{ text: closing }]
+            : [{ text: "Let me check." }, { functionCall: call, thoughtSignature: "sig-1" }];
+      const reply = { candidates: [{ content: { role: "model", parts }, finishReason: "STOP" }] };
+      return String(url).includes(":streamGenerateContent") ? sse([reply]) : Response.json(reply);
+    });
+  }
+  const search = (documentId: string) => ({ name: "search_document", args: { document_id: documentId, query: "deadlock", mode: "exact" } });
+  const deltas = (streamed) => streamed.filter((event) => event.event === "delta").map((event) => event.data.text).join("");
+
+  it("sends the searching to LARGE_FILES_EXPLORER_MODEL and the answer to the model picked in the chat", async () => {
+    vi.stubEnv("LARGE_FILES_EXPLORER_MODEL", " gemini-explorer-test ");
+    const { largeFiles, meta } = await largeLog();
+    const calls = [];
+    const response = await request(createApp({ fetchImpl: gemini(calls, "DONE", search(meta.id)), largeFiles }))
+      .post("/api/chat/stream").send(chatBody(meta.id, { thinkingLevel: "high" }));
+    expect(response.status).toBe(200);
+    // Two requests to the explorer, each in one piece, and the answer streamed from the picked model.
+    expect(calls.map((call) => call.url)).toEqual([
+      `${MODELS}/gemini-explorer-test:generateContent`,
+      `${MODELS}/gemini-explorer-test:generateContent`,
+      `${MODELS}/${picked}:streamGenerateContent?alt=sse`,
+    ]);
+    const [first, , answer] = calls.map((call) => call.body);
+    expect(first.tools[0].functionDeclarations.map((tool) => tool.name)).toEqual(["search_document", "read_document", "get_document_overview", "analyze_whole_document"]);
+    expect(first.systemInstruction.parts[0].text).toMatch(/reply with the single word DONE instead of an answer\.$/);
+    // The explorer runs with the settings of the chat.
+    expect(first.generationConfig).toEqual({ temperature: 1, maxOutputTokens: 1024, thinkingConfig: { thinkingLevel: "high" } });
+    expect(answer.generationConfig).toEqual(first.generationConfig);
+
+    // The picked model gets no tools. Of the explorer it gets the call and its result, and nothing else.
+    expect(answer.tools).toBeUndefined();
+    expect(answer.systemInstruction.parts[0].text).not.toMatch(/single word DONE/);
+    expect(answer.contents.at(-3)).toEqual({ role: "model", parts: [{ functionCall: search(meta.id) }] });
+    expect(answer.contents.at(-2).parts[0].functionResponse).toMatchObject({ name: "search_document", response: { total_matching_lines: 20 } });
+    expect(answer.contents.at(-1)).toEqual({ role: "user", parts: [{ text: expect.stringMatching(/^Stop using tools now/) }] });
+    expect(JSON.stringify(answer)).not.toContain("sig-1");
+    expect(JSON.stringify(answer)).not.toContain("Let me check.");
+
+    const streamed = events(response.text);
+    expect(streamed.find((event) => event.event === "meta").data.model).toBe(picked);
+    expect(streamed.filter((event) => event.event === "step").map((event) => event.data.text)).toEqual(["Search app.log (exact) for “deadlock” — 20 matching lines"]);
+    // Only the picked model's words reach the chat: not the explorer's remark, and not its DONE.
+    expect(deltas(streamed)).toBe(ANSWER);
+    expect(streamed.at(-1)).toMatchObject({ event: "done", data: { finishReason: "STOP" } });
+  });
+
+  it.each([["empty", "  "], ["the picked model itself", picked]])("leaves both halves to the picked model when the setting is %s", async (_label, value) => {
+    vi.stubEnv("LARGE_FILES_EXPLORER_MODEL", value);
+    const { largeFiles, meta } = await largeLog();
+    const calls = [];
+    const response = await request(createApp({ fetchImpl: gemini(calls, ANSWER, search(meta.id)), largeFiles }))
+      .post("/api/chat/stream").send(chatBody(meta.id));
+    const stream = `${MODELS}/${picked}:streamGenerateContent?alt=sse`;
+    expect(calls.map((call) => call.url)).toEqual([stream, stream]);
+    expect(calls[0].body.systemInstruction.parts[0].text).not.toMatch(/single word DONE/);
+    // Its own turn goes back to it unchanged, and its remark is part of what it said.
+    expect(calls[1].body.contents.at(-2).parts[1]).toEqual({ functionCall: search(meta.id), thoughtSignature: "sig-1" });
+    expect(deltas(events(response.text))).toBe(`Let me check.\n\n${ANSWER}`);
+  });
+
+  it("works out the explorer's settings for the explorer's model", async () => {
+    const { largeFiles, meta } = await largeLog();
+    const settingsWith = async (explorerModel: string) => {
+      vi.stubEnv("LARGE_FILES_EXPLORER_MODEL", explorerModel);
+      const calls = [];
+      await request(createApp({ fetchImpl: gemini(calls, "DONE", search(meta.id)), largeFiles }))
+        .post("/api/chat/stream").send(chatBody(meta.id, { thinkingLevel: "high" }));
+      expect(calls[0].url).toBe(`${MODELS}/${explorerModel}:generateContent`);
+      return { explorer: calls[0].body.generationConfig, answer: calls.at(-1).body.generationConfig };
+    };
+    // Gemini 2.5 refuses a thinking level, so it gets none. The picked model keeps its own.
+    const older = await settingsWith("gemini-2.5-flash-lite");
+    expect(older.explorer).toEqual({ temperature: 1, maxOutputTokens: 1024 });
+    expect(older.answer).toEqual({ temperature: 1, maxOutputTokens: 1024, thinkingConfig: { thinkingLevel: "high" } });
+    // Gemini 4 takes no temperature and shares its output budget with thinking.
+    const newer = await settingsWith("gemini-4-argon");
+    expect(newer.explorer).toEqual({ maxOutputTokens: GEMINI_4_MIN_OUTPUT_TOKENS, thinkingConfig: { thinkingLevel: "high" } });
+    expect(newer.answer).toEqual(older.answer);
+  });
+
+  it("has the explorer read a whole file in parts, with settings for its model", async () => {
+    const { largeFiles, meta } = await largeLog({ mapChunkTokens: 40_000 });
+    const readWith = async (explorerModel: string) => {
+      vi.stubEnv("LARGE_FILES_EXPLORER_MODEL", explorerModel);
+      const calls = [];
+      const whole = { name: "analyze_whole_document", args: { document_id: meta.id, task: "List every kind of error." } };
+      const response = await request(createApp({ fetchImpl: gemini(calls, "DONE", whole), largeFiles }))
+        .post("/api/chat/stream").send(chatBody(meta.id, { thinkingLevel: "high" }));
+      const parts = calls.filter((call) => partRead(call.body));
+      expect(parts.length).toBeGreaterThan(2);
+      // Every part goes to the explorer. The picked model is called once, for the answer.
+      expect(parts.every((call) => call.url === `${MODELS}/${explorerModel}:generateContent`)).toBe(true);
+      expect(calls.filter((call) => call.url.includes(`/${picked}:`))).toHaveLength(1);
+      expect(deltas(events(response.text))).toBe(ANSWER);
+      return parts[0].body.generationConfig;
+    };
+    expect(await readWith("gemini-explorer-test")).toEqual({ temperature: 0.2, maxOutputTokens: 4096, thinkingConfig: { thinkingLevel: "low" } });
+    expect(await readWith("gemini-2.5-flash-lite")).toEqual({ temperature: 0.2, maxOutputTokens: 4096 });
+    expect(await readWith("gemini-4-argon")).toEqual({ maxOutputTokens: GEMINI_4_MIN_OUTPUT_TOKENS, thinkingConfig: { thinkingLevel: "low" } });
+  });
+
+  it("reports an explorer model that does not exist as a stream error", async () => {
+    vi.stubEnv("LARGE_FILES_EXPLORER_MODEL", "gemini-no-such-model");
+    const { largeFiles, meta } = await largeLog();
+    const fetchImpl = vi.fn(async () => Response.json({ error: { message: "models/gemini-no-such-model is not found." } }, { status: 404 }));
+    const response = await request(createApp({ fetchImpl, largeFiles })).post("/api/chat/stream").send(chatBody(meta.id));
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(events(response.text).at(-1)).toMatchObject({ event: "error", data: { message: "models/gemini-no-such-model is not found.", status: 404 } });
+  });
+
+  it("does not use the explorer with the original engine", async () => {
+    vi.stubEnv("LARGE_FILES_EXPLORER_MODEL", "gemini-explorer-test");
+    const largeFiles = ENGINES[1].create({ budget: { inlineTokens: 1_000 } });
+    const meta = await largeFiles.files.ingest({ name: "app.log", bytes: new TextEncoder().encode(log(5_000)) });
+    const calls = [];
+    await request(createApp({ fetchImpl: gemini(calls, ANSWER, search(meta.id)), largeFiles })).post("/api/chat/stream").send(chatBody(meta.id));
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.every((call) => call.url.includes(`/${picked}:`))).toBe(true);
+  });
+});
 
 describe("pages of a kept PDF (npm engine)", () => {
   const previousKey = process.env.GEMINI_API_KEY;

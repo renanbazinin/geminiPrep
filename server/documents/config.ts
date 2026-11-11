@@ -82,6 +82,13 @@ export function resolveLargeFilesSettings() {
      */
     keepPdfs: enabled("LARGE_FILES_KEEP_PDFS", true),
     pagePlacement: resolvePagePlacement(),
+    /**
+     * LARGE_FILES_EXPLORER_MODEL: a second model that explores a large file. It makes the tool
+     * calls (search, read, look at pages) and reads a whole file in parts, and the model picked
+     * in the chat then only writes the answer. Unset, the picked model does both. Only the npm
+     * engine does this.
+     */
+    explorerModel: process.env.LARGE_FILES_EXPLORER_MODEL?.trim() || undefined,
     budget: {
       contextTokens: positive("LARGE_FILES_CONTEXT_TOKENS", DEFAULT_BUDGET.contextTokens),
       maxRequestBytes: positive("LARGE_FILES_MAX_REQUEST_BYTES", DEFAULT_BUDGET.maxRequestBytes),
