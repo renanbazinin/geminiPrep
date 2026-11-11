@@ -14,7 +14,8 @@
     "check:gemini-4": "tsx scripts/gemini-4-live-check.ts",
     "check:interactions-tools": "tsx scripts/interactions-tools-live-check.ts",
     "check:large-files-pages": "tsx scripts/large-files-pages-live-check.ts",
-    "check:large-files-explorer": "tsx scripts/large-files-explorer-live-check.ts"
+    "check:large-files-explorer": "tsx scripts/large-files-explorer-live-check.ts",
+    "deploy:gcp": "tsx scripts/deploy-cloud-run.ts"
   },
   "dependencies": {
     "@cantoo/pdf-lib": "^2.11.1",

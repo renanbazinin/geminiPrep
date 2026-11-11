@@ -1,6 +1,7 @@
 import path from "node:path";
 import cors from "cors";
 import express from "express";
+import { createPasswordGate } from "./auth.js";
 import { jiraRoutes } from "./jira/routes.js";
 import { specialGroupRoutes } from "./special-group/routes.js";
 import {
@@ -48,11 +49,22 @@ export function createApp(options: {
   getAccessToken?: () => Promise<string>;
   /** Defaults to the engine in LARGE_FILES_ENGINE. */
   largeFiles?: ServerLargeFiles;
+  /** Shared password for the whole app. Defaults to APP_PASSWORD; empty leaves the app open. */
+  password?: string;
 } = {}) {
   const app = express();
   const getCacheAccessToken = options.getAccessToken ?? getVertexAccessToken;
   const largeFiles = options.largeFiles ?? createServerLargeFiles();
   app.disable("x-powered-by");
+  const password = (options.password ?? process.env.APP_PASSWORD ?? "").trim();
+  if (password) {
+    // On Cloud Run (K_SERVICE is set) Google's front end is one proxy hop: trust it for the
+    // client IP and https. Elsewhere, use the socket so X-Forwarded-For can't be spoofed.
+    if (process.env.K_SERVICE) app.set("trust proxy", 1);
+    const gate = createPasswordGate(password);
+    app.use(gate.routes);
+    app.use(gate.guard);
+  }
   app.use(cors());
   // Before express.json(): uploads arrive as raw bytes, including JSON files.
   app.use("/api/documents", documentRoutes(largeFiles));
@@ -61,6 +73,8 @@ export function createApp(options: {
   app.use("/api/special-group", specialGroupRoutes({ fetchImpl: options.fetchImpl }));
 
   app.get("/api/health", (_req, res) => res.json({ ok: true }));
+  // Behind the password gate: 401 here means the browser has to sign in.
+  app.get("/api/session", (_req, res) => res.json({ ok: true }));
   app.get("/api/config", (_req, res) => res.json(buildPublicConfig()));
 
   app.post("/api/chat/stream", async (req, res) => {

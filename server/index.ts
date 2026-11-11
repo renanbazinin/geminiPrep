@@ -5,6 +5,12 @@ import express from "express";
 import { createApp } from "./app.js";
 import { createServerLargeFiles, describeLargeFilesEngine, removeOrphanOriginals, resolveLargeFilesSettings } from "./documents/config.js";
 
+// K_SERVICE is set on Cloud Run: never serve the app publicly without its password.
+if (process.env.K_SERVICE && !process.env.APP_PASSWORD?.trim()) {
+  console.error("APP_PASSWORD is required when running on Cloud Run. Refusing to start.");
+  process.exit(1);
+}
+
 const largeFiles = createServerLargeFiles();
 const app = createApp({ largeFiles });
 console.log(`Large files: ${describeLargeFilesEngine(largeFiles.engine)} (LARGE_FILES_ENGINE=${largeFiles.engine})`);

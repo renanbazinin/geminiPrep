@@ -106,6 +106,31 @@ npm run dev
 
 Open `http://localhost:5173`. The API server runs on port 3001 and is proxied by Vite.
 
+## Password
+
+Set `APP_PASSWORD` in `.env` to put the whole app (pages, API and `/docs`) behind a login page.
+Signing in keeps a signed, HttpOnly cookie for 30 days; changing the password signs everyone out.
+Leave it empty to run locally without a password. On Cloud Run the server refuses to start without it.
+
+## Deploy to Google Cloud Run
+
+Requirements: the `gcloud` CLI signed in to an account that can manage the project, and
+`APP_PASSWORD` plus `GCP_PROJECT` in `.env`.
+
+```powershell
+npm run deploy:gcp
+```
+
+The script ([scripts/deploy-cloud-run.ts](scripts/deploy-cloud-run.ts)) enables the needed APIs,
+creates a `gemini-prep-run` service account with Vertex AI access, stores `APP_PASSWORD`,
+`GEMINI_API_KEY` and the Jira tokens in Secret Manager, passes the other `.env` settings as
+environment variables, and builds the [Dockerfile](Dockerfile) with Cloud Build. It deploys
+service `gemini-prep` to `us-central1`; override with `GCP_PROJECT`, `REGION` or `SERVICE`.
+Run it again after changing `.env` or the code.
+
+On Cloud Run the service runs a single instance, and uploaded large files are kept in that
+instance's memory, so they are lost when it restarts. Uploads are limited to 30 MB by Cloud Run.
+
 ## Local data and credentials
 
 - Conversation history and settings are serialized to browser `localStorage`.
