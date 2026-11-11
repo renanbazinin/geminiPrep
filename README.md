@@ -65,6 +65,16 @@ graph tool by itself (the same as for a file it has to search): pick the tool yo
 `LARGE_FILES_KEEP_PDFS=0` turns page views off. `npm run check:large-files-pages` asks Vertex AI
 and the Gemini API questions that only the pictures of a PDF answer.
 
+**A second model for the searching.** By default the model picked in the chat does both halves of
+the work on a large file: it explores the file (searches, reads, looks at pages), and it answers.
+`LARGE_FILES_EXPLORER_MODEL` names a second model for the first half, with the npm engine. That
+model makes the tool calls and reads a whole file in parts; the picked model gets what the tools
+returned and writes the answer, in one request. A question about a large log can take ten requests
+of searching, and those then go to the explorer, which can be a cheaper or faster model. The steps
+under the answer are the same, and the answer takes one request more. Unset, nothing changes.
+`npm run check:large-files-explorer` asks Vertex AI and the Gemini API questions through an
+explorer and reports which model got which request.
+
 The logic comes from the [`llm-large-files`](https://www.npmjs.com/package/llm-large-files) npm
 package by default. `LARGE_FILES_ENGINE` picks the implementation:
 
