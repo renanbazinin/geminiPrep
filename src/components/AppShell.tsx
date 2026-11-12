@@ -5,15 +5,15 @@ import {
   MoreHorizontal,
   PanelLeftClose,
   Settings,
-  Sparkles,
   Trash2,
   Ticket,
   Users,
   X,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useApp } from "../contexts/AppContext";
+import { AppVersionTag } from "./AppVersionTag";
 
 function formatRelativeDate(iso: string): string {
   const timestamp = new Date(iso).getTime();
@@ -80,6 +80,14 @@ export function AppShell() {
     : location.pathname === "/tests/cache"
       ? "Cache test"
       : location.pathname === "/tests/regions" ? "Regions test" : location.pathname === "/tests" ? "Tests" : "Chat";
+  // The browser tab names the page, or the conversation that is open once it has messages.
+  const shownConversation = location.pathname === "/"
+    ? conversations.find((conversation) => conversation.id === activeConversationId)
+    : undefined;
+  const tabTitle = shownConversation && shownConversation.messages.length > 0 ? shownConversation.title : pageTitle;
+  useEffect(() => {
+    document.title = `${tabTitle} · Gemini Prep`;
+  }, [tabTitle]);
 
   return (
     <div className="app-shell">
@@ -91,7 +99,7 @@ export function AppShell() {
       <aside className={`sidebar${drawerOpen ? " sidebar-open" : ""}`} aria-label="Main navigation">
         <div className="brand-row">
           <NavLink to="/" className="brand" onClick={() => setDrawerOpen(false)}>
-            <span className="brand-mark"><Sparkles size={17} /></span>
+            <img className="brand-logo" src="/favicon.svg" alt="" width={32} height={32} />
             <span>Gemini Prep</span>
           </NavLink>
           <button className="icon-button sidebar-close" onClick={() => setDrawerOpen(false)} aria-label="Close sidebar">
@@ -163,6 +171,9 @@ export function AppShell() {
             <span>Clear conversations</span>
           </button>
         </nav>
+        <footer className="sidebar-footer">
+          <AppVersionTag />
+        </footer>
       </aside>
 
       <main className="main-area">

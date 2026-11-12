@@ -9,6 +9,20 @@ function signIn(app: ReturnType<typeof createApp>, password = PASSWORD, next = "
 }
 
 describe("password gate", () => {
+  it("keeps the icons and the web app manifest public, and puts them on the login page", async () => {
+    const app = createApp({ password: PASSWORD });
+    for (const asset of ["/favicon.svg", "/apple-touch-icon.png", "/icon-192.png", "/icon-512.png", "/icon-maskable-512.png", "/site.webmanifest"]) {
+      const response = await supertest(app).get(asset).set("Accept", "image/*,text/html");
+      // Past the gate. The production server serves these files from dist/; createApp alone has none.
+      expect(response.status, asset).toBe(404);
+    }
+    const login = await supertest(app).get("/login");
+    expect(login.text).toContain('<link rel="icon" href="/favicon.svg" type="image/svg+xml" />');
+    expect(login.text).toContain('<link rel="manifest" href="/site.webmanifest" />');
+    expect(login.text).toContain('<meta property="og:title" content="Gemini Prep" />');
+    expect(login.text).toContain("<title>Sign in · Gemini Prep</title>");
+  });
+
   it("leaves the app open when no password is configured", async () => {
     const response = await supertest(createApp({ password: "" })).get("/api/session");
     expect(response.status).toBe(200);

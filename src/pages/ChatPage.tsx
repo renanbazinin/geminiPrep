@@ -802,7 +802,7 @@ export function ChatPage() {
       <div className={`messages${activeConversation.messages.length === 0 ? " messages-empty" : ""}`}>
         {activeConversation.messages.length === 0 ? (
           <section className="chat-empty-state">
-            <div className="hero-orb"><Sparkles size={27} /></div>
+            <img className="hero-logo" src="/favicon.svg" alt="" width={58} height={58} />
             <p className="eyebrow">GEMINI CONVERSATION LAB</p>
             <h1>What are you preparing for?</h1>
             <p className="hero-copy">

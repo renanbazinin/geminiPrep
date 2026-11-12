@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <title>Gemini Prep</title>
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#312a63"/>
+      <stop offset="1" stop-color="#15122b"/>
+    </linearGradient>
+    <linearGradient id="star" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#e4deff"/>
+      <stop offset="1" stop-color="#9d8cff"/>
+    </linearGradient>
+  </defs>
+  <rect x="1.5" y="1.5" width="61" height="61" rx="16" fill="url(#tile)" stroke="#4d4485" stroke-width="3"/>
+  <path fill="url(#star)" d="M27 11C28.7 22.2 31.8 25.3 43 27C31.8 28.7 28.7 31.8 27 43C25.3 31.8 22.2 28.7 11 27C22.2 25.3 25.3 22.2 27 11Z"/>
+  <path fill="#48cbb9" d="M44.5 36C45.3 41.3 47.2 43.2 52.5 44C47.2 44.8 45.3 46.7 44.5 52C43.7 46.7 41.8 44.8 36.5 44C41.8 43.2 43.7 41.3 44.5 36Z"/>
+</svg>

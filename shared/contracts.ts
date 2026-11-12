@@ -255,6 +255,17 @@ export type ProviderConfig = {
   models: ModelOption[];
 };
 
+/** What the server runs: its package version and, when known, the commit and when it was deployed. */
+export type AppVersion = {
+  version: string;
+  /** Short commit, from APP_COMMIT (set by the deploy script) or the local checkout. "-dirty" marks files that differed from it. */
+  commit?: string;
+  /** The commit on GitHub, when package.json names a GitHub repository. */
+  commitUrl?: string;
+  /** ISO time of the deploy, from APP_DEPLOYED_AT. Absent for local runs. */
+  deployedAt?: string;
+};
+
 export type PublicConfig = {
   appName: string;
   project: string | null;
@@ -268,6 +279,8 @@ export type PublicConfig = {
   };
   /** Absent from older servers; the browser then keeps every attachment local. */
   largeFiles?: LargeFilesConfig;
+  /** Absent from older servers; the footer then shows no version. */
+  version?: AppVersion;
 };
 
 export type ChatStreamRequest = {

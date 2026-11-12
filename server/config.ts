@@ -1,5 +1,6 @@
 import type { PublicConfig } from "../shared/contracts.js";
 import { publicLargeFilesConfig } from "./documents/config.js";
+import { resolveAppVersion } from "./version.js";
 import {
   resolveGeminiChatModels,
   resolveProbeRegions,
@@ -47,6 +48,7 @@ export function buildPublicConfig(): PublicConfig {
       region: defaultRegion,
     },
     largeFiles: publicLargeFilesConfig(),
+    version: resolveAppVersion(),
   };
 }
 
