@@ -133,6 +133,11 @@ Run it again after changing `.env` or the code.
 On Cloud Run the service runs a single instance, and uploaded large files are kept in that
 instance's memory, so they are lost when it restarts. Uploads are limited to 30 MB by Cloud Run.
 
+The foot of the sidebar shows what runs: the `version` in `package.json`, the commit (linked on
+GitHub) and the day of the deploy. The image has no git, so the script sets `APP_COMMIT` and
+`APP_DEPLOYED_AT` on the service; a commit that ends in `-dirty` means the deployed files had
+changes that were not committed. A local run shows the commit of its checkout.
+
 ## Local data and credentials
 
 - Conversation history and settings are serialized to browser `localStorage`.

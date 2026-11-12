@@ -508,4 +508,9 @@ describe("chat API", () => {
     expect(response.body.providers.gemini.ready).toBe(true);
     expect(JSON.stringify(response.body)).not.toContain("test-key");
   });
+
+  it("reports the running version in the public config", async () => {
+    const response = await request(createApp()).get("/api/config");
+    expect(response.body.version.version).toMatch(/^\d+\.\d+\.\d+/);
+  });
 });

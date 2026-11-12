@@ -7,7 +7,12 @@ import express, { type Request, type RequestHandler, type Response, type Router 
 
 const COOKIE = "gp_session";
 const SESSION_MS = 30 * 24 * 60 * 60 * 1000;
-const PUBLIC_PATHS = new Set(["/login", "/api/health"]);
+// The icons and the web app manifest are public too: the login page shows the icon, and a browser
+// fetches the manifest and its icons without cookies.
+const PUBLIC_PATHS = new Set([
+  "/login", "/api/health",
+  "/favicon.svg", "/apple-touch-icon.png", "/icon-192.png", "/icon-512.png", "/icon-maskable-512.png", "/site.webmanifest",
+]);
 const MAX_FAILURES = 10;
 const FAILURE_WINDOW_MS = 15 * 60 * 1000;
 
@@ -48,6 +53,9 @@ function sendLoginPage(res: Response, status: number, next: string, error?: stri
   }).type("html").send(loginPage(next, error));
 }
 
+/** The app's one-line description, as in index.html and public/site.webmanifest. */
+const DESCRIPTION = "A Gemini chat and learning lab: chat on Vertex AI and the Gemini API, with large files, Jira assistants and documented experiments.";
+
 function loginPage(next: string, error?: string): string {
   return `<!doctype html>
 <html lang="en">
@@ -56,7 +64,17 @@ function loginPage(next: string, error?: string): string {
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="theme-color" content="#0b0d10" />
 <meta name="robots" content="noindex" />
-<title>Gemini Prep · Sign in</title>
+<meta name="description" content="${DESCRIPTION}" />
+<title>Sign in · Gemini Prep</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+<link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+<link rel="manifest" href="/site.webmanifest" />
+<!-- A link to the app shows this page to a signed-out preview, so it carries the app's card. -->
+<meta property="og:type" content="website" />
+<meta property="og:site_name" content="Gemini Prep" />
+<meta property="og:title" content="Gemini Prep" />
+<meta property="og:description" content="${DESCRIPTION}" />
+<meta name="twitter:card" content="summary" />
 <style>
   :root { color-scheme: dark; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
   * { box-sizing: border-box; }
@@ -70,10 +88,12 @@ function loginPage(next: string, error?: string): string {
   button { font: inherit; font-weight: 600; padding: 10px 12px; border: 0; border-radius: 10px; background: #9d8cff; color: #0b0d10; cursor: pointer; }
   button:hover { background: #b8adff; }
   .error { color: #f08d95; }
+  .logo { display: block; width: 44px; height: 44px; border-radius: 11px; box-shadow: 0 0 32px rgba(157, 140, 255, 0.16); }
 </style>
 </head>
 <body>
 <form method="post" action="/login">
+  <img class="logo" src="/favicon.svg" alt="" width="44" height="44" />
   <h1>Gemini Prep</h1>
   <p>Enter the password to continue.</p>
   ${error ? `<p class="error" role="alert">${escapeHtml(error)}</p>` : ""}

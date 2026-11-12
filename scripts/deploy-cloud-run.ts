@@ -64,6 +64,12 @@ function gcloud(args: string[], options: SpawnSyncOptions & { allowFailure?: boo
   return { ok: result.status === 0, stdout: String(result.stdout ?? "").trim() };
 }
 
+/** A git command in the repository being deployed, or "" when it fails (for example, without git). */
+function git(args: string[]): string {
+  const result = spawnSync("git", args, { cwd: repoRoot, encoding: "utf8" });
+  return result.status === 0 ? String(result.stdout ?? "").trim() : "";
+}
+
 function fail(message: string): never {
   console.error(`\n✗ ${message}`);
   process.exit(1);
@@ -113,6 +119,11 @@ for (const [key, value] of Object.entries(values)) {
 plain.LARGE_FILES_DIR = "/tmp/large-files";
 const requestedUploadMb = Number(plain.LARGE_FILES_MAX_UPLOAD_MB) || 100;
 plain.LARGE_FILES_MAX_UPLOAD_MB = String(Math.min(requestedUploadMb, CLOUD_RUN_MAX_UPLOAD_MB));
+// What the app's footer shows. The image has no git, so the commit and the deploy time are set
+// here; a commit ending in "-dirty" means the deployed files had changes that were not committed.
+const commit = git(["rev-parse", "--short", "HEAD"]);
+if (commit) plain.APP_COMMIT = git(["status", "--porcelain"]) ? `${commit}-dirty` : commit;
+plain.APP_DEPLOYED_AT = new Date().toISOString();
 
 const envFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "gemini-prep-")), "env.yaml");
 fs.writeFileSync(envFile, Object.entries(plain).map(([key, value]) => `${key}: ${JSON.stringify(value)}`).join("\n") + "\n");
@@ -141,4 +152,4 @@ try {
 }
 
 const url = gcloud(["run", "services", "describe", service, `--region=${region}`, "--format=value(status.url)"]).stdout;
-console.log(`\n✓ Deployed: ${url}\n  Sign in with APP_PASSWORD from ${path.join(envDir, ".env")}.`);
+console.log(`\n✓ Deployed${plain.APP_COMMIT ? ` ${plain.APP_COMMIT}` : ""}: ${url}\n  Sign in with APP_PASSWORD from ${path.join(envDir, ".env")}.`);
