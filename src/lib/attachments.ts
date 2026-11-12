@@ -6,6 +6,7 @@ const DATABASE_NAME = "gemini-prep-files-v1";
 const STORE_NAME = "attachments";
 export const MAX_ATTACHMENTS_PER_MESSAGE = 10;
 export const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
+/** The most extracted text kept in this browser when there are no large-file limits (the cache lab). */
 export const MAX_EXTRACTED_CHARACTERS = 1_000_000;
 
 const TEXT_EXTENSIONS = ["md", "markdown", "json", "jsonl", "ndjson", "txt", "log", "csv", "tsv", "xml", "yaml", "yml"];
@@ -147,22 +148,23 @@ export async function extractPptxText(buffer: ArrayBuffer): Promise<string> {
   return slides.join("\n\n");
 }
 
-function ensureExtractedSize(text: string, name: string): string {
+function ensureExtractedSize(text: string, name: string, maxCharacters: number): string {
   if (!text.trim()) throw new Error(`${name} did not contain extractable text.`);
-  if (text.length > MAX_EXTRACTED_CHARACTERS) {
-    throw new Error(`${name} contains more than ${MAX_EXTRACTED_CHARACTERS.toLocaleString()} extracted characters.`);
+  if (text.length > maxCharacters) {
+    throw new Error(`${name} contains more than ${maxCharacters.toLocaleString()} extracted characters.`);
   }
   return text;
 }
 
 /**
- * Whether a file is too large to send inline and should go to the server, judged by size alone.
- * DOCX and PPTX can also be sent there after extraction, when their text turns out to be long.
+ * Whether a file goes to the server instead of being sent as it is, judged by its size: a PDF
+ * against `pdfInlineMaxBytes`, text, DOCX and PPTX against `serverThresholdBytes`, and never more
+ * than this browser keeps. A DOCX or PPTX under the threshold still goes when its extracted text
+ * turns out to be longer than the threshold.
  */
 export function goesToServer(file: Pick<File, "size">, kind: ChatAttachmentKind, limits: LargeFilesConfig): boolean {
   if (kind === "pdf") return file.size > limits.pdfInlineMaxBytes;
-  if (kind === "text") return file.size > limits.serverThresholdBytes;
-  return file.size > MAX_ATTACHMENT_BYTES;
+  return file.size > Math.min(limits.serverThresholdBytes, MAX_ATTACHMENT_BYTES);
 }
 
 async function uploadAttachment(file: File, kind: ChatAttachmentKind, limits: LargeFilesConfig): Promise<ChatAttachment> {
@@ -211,7 +213,8 @@ export async function processAttachment(file: File, options: { largeFiles?: Larg
     else if (kind === "pptx") text = await extractPptxText(await file.arrayBuffer());
     else text = await file.text();
     if (limits && text.length > limits.serverThresholdBytes) return uploadAttachment(file, kind, limits);
-    text = ensureExtractedSize(text, file.name);
+    // With large-file limits, longer text has just gone to the server, so the text left is sent as it is.
+    text = ensureExtractedSize(text, file.name, limits ? limits.serverThresholdBytes : MAX_EXTRACTED_CHARACTERS);
     extractedCharacters = text.length;
     await storePayload(storageKey, { kind: "text", text });
   }

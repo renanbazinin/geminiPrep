@@ -46,6 +46,16 @@ function sseResponse(blocks) {
 }
 
 describe("chat validation", () => {
+  it("counts attached text apart from typed text, up to what the browser keeps", () => {
+    const book = (characters) => ({ kind: "text", name: "book.txt", mimeType: "text/plain", text: "a".repeat(characters) });
+    const ask = (content, files) => validBody({ messages: [{ role: "user", content, ...(files ? { files } : {}) }] });
+    expect(() => validateChatRequest(ask("Read it", [book(4 * 1024 * 1024)]), catalogs())).not.toThrow();
+    expect(() => validateChatRequest(ask("a".repeat(1_000_001)), catalogs()))
+      .toThrow("Conversation history cannot exceed 1000000 characters.");
+    expect(() => validateChatRequest(ask("Read them", Array.from({ length: 6 }, () => book(4 * 1024 * 1024))), catalogs()))
+      .toThrow("Text of attached files in the conversation cannot exceed the local 20 MB budget.");
+  });
+
   it("accepts a configured Gemini request", () => {
     expect(validateChatRequest(validBody(), catalogs())).toMatchObject({ provider: "gemini" });
   });

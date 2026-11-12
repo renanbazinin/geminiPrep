@@ -20,6 +20,33 @@ function uploadResponse(id = `doc_${"a".repeat(32)}`) {
   }), { status: 201, headers: { "Content-Type": "application/json" } });
 }
 
+/** Just enough of IndexedDB for processAttachment to keep a file in this browser. */
+function fakeIndexedDb() {
+  const database = {
+    objectStoreNames: { contains: () => true },
+    transaction() {
+      const transaction: { objectStore: () => { put: () => void }; oncomplete?: () => void } = { objectStore: () => ({ put: () => undefined }) };
+      queueMicrotask(() => transaction.oncomplete?.());
+      return transaction;
+    },
+  };
+  return {
+    open() {
+      const request: { result: typeof database; onsuccess?: () => void } = { result: database };
+      queueMicrotask(() => request.onsuccess?.());
+      return request;
+    },
+  };
+}
+
+/** A text file of 1,320,000 characters. jsdom's File does not implement text(). */
+function longTextFile(): { file: File; text: string } {
+  const text = "a line of a long book\n".repeat(60_000);
+  const file = new File([text], "book.txt", { type: "text/plain" });
+  Object.defineProperty(file, "text", { value: async () => text });
+  return { file, text };
+}
+
 afterEach(() => vi.unstubAllGlobals());
 
 describe("large attachment routing", () => {
@@ -28,11 +55,37 @@ describe("large attachment routing", () => {
     expect(attachmentKind({ name: "events.jsonl", type: "" })).toBe("text");
   });
 
-  it("sends large text and PDFs to the server and keeps small ones local", () => {
+  it("sends files over the thresholds to the server and keeps smaller ones local", () => {
     expect(goesToServer({ size: 999 }, "text", limits)).toBe(false);
     expect(goesToServer({ size: 1_001 }, "text", limits)).toBe(true);
+    expect(goesToServer({ size: 999 }, "docx", limits)).toBe(false);
+    expect(goesToServer({ size: 1_001 }, "docx", limits)).toBe(true);
+    expect(goesToServer({ size: 1_001 }, "pptx", limits)).toBe(true);
     expect(goesToServer({ size: 6 * 1024 * 1024 }, "pdf", limits)).toBe(false);
     expect(goesToServer({ size: 8 * 1024 * 1024 }, "pdf", limits)).toBe(true);
+  });
+
+  it("never keeps more in the browser than its local limit, whatever the threshold", () => {
+    const high = { ...limits, serverThresholdBytes: 50 * 1024 * 1024 };
+    expect(goesToServer({ size: 19 * 1024 * 1024 }, "text", high)).toBe(false);
+    expect(goesToServer({ size: 21 * 1024 * 1024 }, "text", high)).toBe(true);
+    expect(goesToServer({ size: 21 * 1024 * 1024 }, "pptx", high)).toBe(true);
+  });
+
+  it("sends text under the threshold as it is, even past 1,000,000 characters", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("indexedDB", fakeIndexedDb());
+    const { file, text } = longTextFile();
+    const attachment = await processAttachment(file, { largeFiles: { ...limits, serverThresholdBytes: 4 * 1024 * 1024 } });
+    expect(attachment.document).toBeUndefined();
+    expect(attachment.extractedCharacters).toBe(text.length);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("still caps extracted text at 1,000,000 characters without large-file limits", async () => {
+    vi.stubGlobal("indexedDB", fakeIndexedDb());
+    await expect(processAttachment(longTextFile().file)).rejects.toThrow(/book\.txt contains more than .+ extracted characters/);
   });
 
   it("uploads a large log as raw bytes and references it by ID", async () => {

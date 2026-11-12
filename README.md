@@ -44,9 +44,11 @@ DOCX and PPTX files are unzipped locally and reduced to readable text; legacy bi
 are intentionally rejected. File bodies live in browser IndexedDB while conversation JSON keeps
 only metadata, preventing large base64 payloads from filling `localStorage`.
 
-**Large files** (books, logs, big exports, up to 100 MB) are uploaded to the server instead: text
-over 512 KB and PDFs over 7 MB by default. Each turn, the server decides whether a file fits the
-model's limits (default 10 MB per request, 1M-token context) and sends it in full, or gives Gemini
+**Large files** (books, logs, big exports, up to 100 MB) are uploaded to the server instead: text,
+DOCX and PPTX over 512 KB and PDFs over 7 MB by default (a DOCX or PPTX whose text is longer than
+that goes too). A smaller file is sent to Gemini as it is, without counting its tokens. Each turn,
+the server decides whether an uploaded file fits the model's limits (by default 200K tokens of file
+text, within 10 MB per request and a 1M-token context) and sends it in full, or gives Gemini
 a summary card plus tools to search, read line ranges, or read the whole file in parts. The steps
 Gemini took appear under its answer. Limits are set with the `LARGE_FILES_*` variables in
 `.env.example`.
