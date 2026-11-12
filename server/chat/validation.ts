@@ -18,6 +18,12 @@ const MAX_SYSTEM_CHARACTERS = 20_000;
 const MAX_FILES_PER_MESSAGE = 10;
 const MAX_FILES_PER_REQUEST = 30;
 const MAX_TOTAL_INLINE_DATA_CHARACTERS = 28_000_000;
+/**
+ * Text of attached files, counted apart from typed text. The browser sends a file as it is up to
+ * the large-file threshold (LARGE_FILES_SERVER_THRESHOLD_KB) and keeps up to 20 MB of files, so
+ * this is that budget, like the inline PDF limit above.
+ */
+const MAX_TOTAL_TEXT_FILE_CHARACTERS = 21_000_000;
 const CACHED_CONTENT_PATTERN = /^projects\/[A-Za-z0-9._-]+\/locations\/([a-z0-9-]+)\/cachedContents\/[A-Za-z0-9_-]+$/;
 
 function isRole(value: unknown): value is MessageRole {
@@ -128,6 +134,7 @@ export function validateChatRequest(
   let totalCharacters = 0;
   let totalFiles = 0;
   let totalInlineDataCharacters = 0;
+  let totalTextFileCharacters = 0;
   const messages = input.messages.map((candidate, index) => {
     if (!candidate || typeof candidate !== "object") fail(`messages[${index}] is invalid.`);
     const entry = candidate as Record<string, unknown>;
@@ -158,7 +165,7 @@ export function validateChatRequest(
           if (typeof file.text !== "string" || !file.text.trim()) {
             fail(`messages[${index}].files[${fileIndex}].text is required.`);
           }
-          totalCharacters += file.text.length;
+          totalTextFileCharacters += file.text.length;
           return { kind: "text" as const, name: file.name, mimeType: file.mimeType, text: file.text };
         }
         if (file.kind === "inlineData") {
@@ -197,6 +204,9 @@ export function validateChatRequest(
   if (previousInteractionId && messages.some((message) => message.role !== "user")) fail("A stored interaction continuation accepts only new user input, not replayed history.");
   if (totalCharacters > MAX_TOTAL_CHARACTERS) {
     fail(`Conversation history cannot exceed ${MAX_TOTAL_CHARACTERS} characters.`);
+  }
+  if (totalTextFileCharacters > MAX_TOTAL_TEXT_FILE_CHARACTERS) {
+    fail("Text of attached files in the conversation cannot exceed the local 20 MB budget.");
   }
   if (totalFiles > MAX_FILES_PER_REQUEST) {
     fail(`Conversation history cannot contain more than ${MAX_FILES_PER_REQUEST} files.`);
