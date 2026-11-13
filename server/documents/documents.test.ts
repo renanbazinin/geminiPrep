@@ -516,7 +516,7 @@ describe("pages of a kept PDF (npm engine)", () => {
 
     // A text file has nothing to look at, so only its text is stored.
     const text = await request(app).post("/api/documents").set("Content-Type", "application/octet-stream").set("X-File-Name", "app.log").send(Buffer.from(log(50)));
-    expect((await readdir(directory)).sort()).toEqual([`${text.body.id}.json`, `${text.body.id}.txt`]);
+    expect((await readdir(directory)).sort()).toEqual([`${text.body.id}.idx`, `${text.body.id}.json`, `${text.body.id}.txt`]);
   });
 
   it("removes a kept PDF when its document expires", async () => {
@@ -533,7 +533,7 @@ describe("pages of a kept PDF (npm engine)", () => {
   it("does not keep PDFs when LARGE_FILES_KEEP_PDFS is off", async () => {
     vi.stubEnv("LARGE_FILES_KEEP_PDFS", "0");
     const meta = await upload(createApp({ largeFiles: createServerLargeFiles("npm") }), await pdf(REPORT));
-    expect((await readdir(directory)).sort()).toEqual([`${meta.id}.json`, `${meta.id}.txt`]);
+    expect((await readdir(directory)).sort()).toEqual([`${meta.id}.idx`, `${meta.id}.json`, `${meta.id}.txt`]);
   });
 
   it("lets Gemini look at pages of a PDF whose text fits, and shows the look as a step", async () => {

@@ -110,7 +110,8 @@ export async function streamWithPackage(options: {
       endpoint: {
         url: toGenerateContentUrl(upstream.url),
         streamUrl: upstream.url,
-        headers,
+        // Asked for with every request since 0.5.0: a whole-file read can outlast a Vertex token.
+        headers: request.provider === "vertex" ? async () => ({ ...headers, Authorization: `Bearer ${await getVertexAccessToken()}` }) : headers,
         ...(explorer ? { explorerUrl: toGenerateContentUrl(explorer.url) } : {}),
       },
       documentIds: documentIds(request),
@@ -152,7 +153,9 @@ export async function streamWithPackage(options: {
     }
     send({ event: "done", data: {
       ...(result.finishReason ? { finishReason: result.finishReason } : {}),
-      ...(result.usage ? { usage: result.usage } : {}),
+      // Gemini's own usageMetadata of the last response, as before llm-large-files 0.5.0, where
+      // result.usage became the total of the whole question (requests, inputTokens, byModel, …).
+      ...(result.lastUsage ? { usage: result.lastUsage } : {}),
       providerStatus: 200,
       finishedAt: new Date().toISOString(),
       durationMs: Date.now() - startedMs,
@@ -164,7 +167,8 @@ export async function streamWithPackage(options: {
     if (signal?.aborted) throw error;
     send({ event: "error", data: {
       message: error instanceof Error ? error.message : String(error),
-      ...(error instanceof GeminiRequestError ? { status: error.status } : {}),
+      // Status 0 is a connection that failed (since 0.5.0), not an HTTP status to show.
+      ...(error instanceof GeminiRequestError && error.status > 0 ? { status: error.status } : {}),
       finishedAt: new Date().toISOString(),
       durationMs: Date.now() - startedMs,
     } });

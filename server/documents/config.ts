@@ -99,6 +99,27 @@ export function resolveLargeFilesSettings() {
   };
 }
 
+const BUDGET_SETTINGS = {
+  contextTokens: "LARGE_FILES_CONTEXT_TOKENS",
+  maxRequestBytes: "LARGE_FILES_MAX_REQUEST_BYTES",
+  inlineTokens: "LARGE_FILES_INLINE_TOKENS",
+  mapChunkTokens: "LARGE_FILES_MAP_CHUNK_TOKENS",
+  maxMapChunks: "LARGE_FILES_MAX_MAP_CHUNKS",
+} as const;
+
+/**
+ * The budget fields that are set in the environment, and no others. llm-large-files 0.5.0 works
+ * out what is left open from the context window, so LARGE_FILES_CONTEXT_TOKENS alone is enough for
+ * a smaller model. Given all five, a small window next to the default part size is a startup error.
+ */
+export function environmentBudget(): Partial<typeof DEFAULT_BUDGET> {
+  const budget: Partial<typeof DEFAULT_BUDGET> = {};
+  for (const [field, name] of Object.entries(BUDGET_SETTINGS) as Array<[keyof typeof BUDGET_SETTINGS, string]>) {
+    if (process.env[name]?.trim()) budget[field] = positive(name, DEFAULT_BUDGET[field]);
+  }
+  return budget;
+}
+
 export function publicLargeFilesConfig(): LargeFilesConfig {
   const settings = resolveLargeFilesSettings();
   return {
@@ -121,7 +142,7 @@ export function createServerLargeFiles(engine: LargeFilesEngine = resolveLargeFi
     budget: settings.budget,
   };
   return engine === "npm"
-    ? { engine, files: createPackageLargeFiles({ ...options, store: new PackageFileDocumentStore(settings.directory), keepOriginals: settings.keepPdfs ? ["pdf"] : [] }) }
+    ? { engine, files: createPackageLargeFiles({ ...options, budget: environmentBudget(), store: new PackageFileDocumentStore(settings.directory), keepOriginals: settings.keepPdfs ? ["pdf"] : [] }) }
     : { engine, files: createOriginalLargeFiles({ ...options, store: new OriginalFileDocumentStore(settings.directory) }) };
 }
 
