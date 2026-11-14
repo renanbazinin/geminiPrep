@@ -99,7 +99,8 @@ a { color: inherit; }
 .sidebar-link-active { border-color: var(--border); }
 .danger-link:hover { color: var(--danger); }
 .sidebar-footer { padding: 12px 11px 0; }
-.version-tag { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; color: var(--subtle); font-size: 0.7rem; font-variant-numeric: tabular-nums; }
+.version-tag { display: grid; gap: 3px; color: var(--subtle); font-size: 0.7rem; font-variant-numeric: tabular-nums; }
+.version-tag p { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .version-tag a, .version-commit { color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; text-decoration: none; }
 .version-tag a:hover { color: var(--accent-strong); text-decoration: underline; }
 
