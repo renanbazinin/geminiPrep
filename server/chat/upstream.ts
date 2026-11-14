@@ -252,6 +252,30 @@ export function mergeFunctionCall(
   return merged;
 }
 
+/**
+ * The body of a failed provider response, parsed. Generate Content answers a failure with a JSON
+ * object. The Interactions API, asked to stream, answers with a server-sent event instead ("event:
+ * error", then "data: {...}") and still calls it application/json, so reading it as JSON alone
+ * loses the provider's message. Null when the body is neither.
+ */
+export async function readUpstreamError(response: globalThis.Response): Promise<unknown> {
+  const text = await response.text().catch(() => "");
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    // Not plain JSON: look for the data of a server-sent event.
+  }
+  const data = text.replace(/\r\n/g, "\n").split("\n\n")
+    .map((block) => block.split("\n").filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trimStart()).join("\n"))
+    .find(Boolean);
+  if (!data) return null;
+  try {
+    return JSON.parse(data) as unknown;
+  } catch {
+    return null;
+  }
+}
+
 export function upstreamErrorMessage(value: unknown, status: number): string {
   const parsed = value as { error?: { message?: unknown } } | null;
   if (typeof parsed?.error?.message === "string") return parsed.error.message;

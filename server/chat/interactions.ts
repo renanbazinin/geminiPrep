@@ -1,7 +1,7 @@
 import type { Response } from "express";
 import type { ChatStreamEvent, ChatStreamRequest } from "../../shared/contracts.js";
 import { normalizeImageMimeType, resolvedChatSystemInstruction } from "../../shared/chat-tools.js";
-import { describeUpstreamRequest, parseSseJson, upstreamErrorMessage } from "./upstream.js";
+import { describeUpstreamRequest, parseSseJson, readUpstreamError, upstreamErrorMessage } from "./upstream.js";
 import { isInteractionAccessError, isInvalidInteractionReference } from "./interaction-errors.js";
 import { getVertexAccessToken } from "../vertex-auth.js";
 import { gemini4OutputTokens, gemini4ThinkingLevel, isGemini4Model } from "../../shared/gemini-4.js";
@@ -166,7 +166,7 @@ export async function proxyInteractionStream(options: {
   try {
     const result = await fetchImpl(upstream.url, upstream.init);
     if (!result.ok) {
-      const value: unknown = await result.json().catch(() => null);
+      const value = await readUpstreamError(result);
       const message = upstreamErrorMessage(value, result.status);
       let invalidReference = Boolean(request.previousInteractionId && isInvalidInteractionReference(result.status, value));
       // Google can report a bad ID as a generic INVALID_ARGUMENT. Check the resource
