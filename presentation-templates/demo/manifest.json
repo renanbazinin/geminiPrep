@@ -1,0 +1,1019 @@
+{
+  "version": 1,
+  "name": "demo",
+  "direction": "ltr",
+  "alignOnDirectionChange": "flip",
+  "patterns": [
+    {
+      "id": "cover",
+      "sourceSlide": 1,
+      "description": "Opening title slide with a main presentation heading, subtitle, and branded background elements.",
+      "slots": [
+        {
+          "name": "title",
+          "kind": "text",
+          "shapeId": "5",
+          "size": 50,
+          "maxChars": 36
+        },
+        {
+          "name": "subtitle",
+          "kind": "text",
+          "shapeId": "6",
+          "size": 20,
+          "maxChars": 86,
+          "empty": "remove"
+        },
+        {
+          "name": "organizationDepartment",
+          "kind": "text",
+          "shapeId": "7",
+          "size": 13,
+          "maxChars": 61,
+          "deckField": "organizationDepartment",
+          "alignOnDirectionChange": "keep"
+        }
+      ]
+    },
+    {
+      "id": "text-and-photo",
+      "sourceSlide": 2,
+      "description": "A title, subtitle, and body text on the left paired with a full-height photo on the right.",
+      "slots": [
+        {
+          "name": "photo",
+          "kind": "image",
+          "imageKind": "photo",
+          "shapeId": "2"
+        },
+        {
+          "name": "title",
+          "kind": "text",
+          "shapeId": "5",
+          "size": 34,
+          "maxChars": 43
+        },
+        {
+          "name": "subtitle",
+          "kind": "text",
+          "shapeId": "6",
+          "size": 17,
+          "maxChars": 42,
+          "empty": "remove"
+        },
+        {
+          "name": "body",
+          "kind": "text",
+          "shapeId": "7",
+          "size": 18,
+          "maxChars": 352
+        },
+        {
+          "name": "organizationDepartment",
+          "kind": "text",
+          "shapeId": "4",
+          "size": 12,
+          "maxChars": 61,
+          "deckField": "organizationDepartment",
+          "alignOnDirectionChange": "keep"
+        }
+      ]
+    },
+    {
+      "id": "text-and-photo-mirrored",
+      "sourceSlide": 2,
+      "description": "A tall photo on the left with a title, subtitle and body text on the right. The mirror image of text-and-photo: alternate the two for variety.",
+      "slots": [
+        {
+          "name": "photo",
+          "kind": "image",
+          "imageKind": "photo",
+          "shapeId": "2",
+          "box": {
+            "x": 0,
+            "y": 0.1367,
+            "w": 0.4277,
+            "h": 0.8633
+          }
+        },
+        {
+          "name": "title",
+          "kind": "text",
+          "shapeId": "5",
+          "size": 34,
+          "maxChars": 43,
+          "box": {
+            "x": 0.4825,
+            "y": 0.2,
+            "w": 0.48,
+            "h": 0.1867
+          }
+        },
+        {
+          "name": "subtitle",
+          "kind": "text",
+          "shapeId": "6",
+          "size": 17,
+          "maxChars": 42,
+          "empty": "remove",
+          "box": {
+            "x": 0.4825,
+            "y": 0.4067,
+            "w": 0.4725,
+            "h": 0.0533
+          }
+        },
+        {
+          "name": "body",
+          "kind": "text",
+          "shapeId": "7",
+          "size": 18,
+          "maxChars": 352,
+          "box": {
+            "x": 0.4825,
+            "y": 0.4933,
+            "w": 0.465,
+            "h": 0.3867
+          }
+        },
+        {
+          "name": "organizationDepartment",
+          "kind": "text",
+          "shapeId": "4",
+          "size": 12,
+          "maxChars": 61,
+          "deckField": "organizationDepartment",
+          "alignOnDirectionChange": "keep"
+        }
+      ]
+    },
+    {
+      "id": "text-only",
+      "sourceSlide": 2,
+      "description": "A title, an optional supporting line and two or three short paragraphs, with no picture. Use it sparingly, for a point that needs words.",
+      "slots": [
+        {
+          "name": "photo",
+          "kind": "image",
+          "imageKind": "graphic",
+          "shapeId": "2",
+          "empty": "drop"
+        },
+        {
+          "name": "title",
+          "kind": "text",
+          "shapeId": "5",
+          "size": 34,
+          "maxChars": 83,
+          "box": {
+            "x": 0.0375,
+            "y": 0.2,
+            "w": 0.925,
+            "h": 0.187
+          }
+        },
+        {
+          "name": "subtitle",
+          "kind": "text",
+          "shapeId": "6",
+          "size": 17,
+          "maxChars": 82,
+          "empty": "remove",
+          "box": {
+            "x": 0.0375,
+            "y": 0.4067,
+            "w": 0.925,
+            "h": 0.0533
+          }
+        },
+        {
+          "name": "body",
+          "kind": "text",
+          "shapeId": "7",
+          "size": 18,
+          "maxChars": 331,
+          "box": {
+            "x": 0.0375,
+            "y": 0.4933,
+            "w": 0.72,
+            "h": 0.3867
+          },
+          "fontSize": 20,
+          "maxParagraphs": 3,
+          "paragraphGap": 12
+        },
+        {
+          "name": "organizationDepartment",
+          "kind": "text",
+          "shapeId": "4",
+          "size": 12,
+          "maxChars": 61,
+          "deckField": "organizationDepartment",
+          "alignOnDirectionChange": "keep"
+        }
+      ]
+    },
+    {
+      "id": "photo-stat",
+      "sourceSlide": 3,
+      "description": "Showcases a single key metric or percentage with an accompanying image, title, and explanatory text.",
+      "slots": [
+        {
+          "name": "photo",
+          "kind": "image",
+          "imageKind": "photo",
+          "shapeId": "5"
+        },
+        {
+          "name": "title",
+          "kind": "text",
+          "shapeId": "6",
+          "size": 30,
+          "maxChars": 46
+        },
+        {
+          "name": "statValue",
+          "kind": "text",
+          "shapeId": "7",
+          "size": 84,
+          "maxChars": 5
+        },
+        {
+          "name": "statDescription",
+          "kind": "text",
+          "shapeId": "8",
+          "size": 19,
+          "maxChars": 211
+        },
+        {
+          "name": "organizationDepartment",
+          "kind": "text",
+          "shapeId": "3",
+          "size": 12,
+          "maxChars": 61,
+          "deckField": "organizationDepartment",
+          "alignOnDirectionChange": "keep"
+        }
+      ],
+      "figures": true
+    },
+    {
+      "id": "photo-stat-mirrored",
+      "sourceSlide": 3,
+      "description": "A single key metric or percentage with a title and explanatory text on the left and an image on the right. The mirror image of photo-stat: alternate the two for variety.",
+      "slots": [
+        {
+          "name": "photo",
+          "kind": "image",
+          "imageKind": "photo",
+          "shapeId": "5",
+          "box": {
+            "x": 0.54,
+            "y": 0.1733,
+            "w": 0.42,
+            "h": 0.7333
+          }
+        },
+        {
+          "name": "title",
+          "kind": "text",
+          "shapeId": "6",
+          "size": 30,
+          "maxChars": 46,
+          "box": {
+            "x": 0.0375,
+            "y": 0.1867,
+            "w": 0.4575,
+            "h": 0.16
+          }
+        },
+        {
+          "name": "statValue",
+          "kind": "text",
+          "shapeId": "7",
+          "size": 84,
+          "maxChars": 5,
+          "box": {
+            "x": 0.0375,
+            "y": 0.38,
+            "w": 0.4575,
+            "h": 0.1933
+          }
+        },
+        {
+          "name": "statDescription",
+          "kind": "text",
+          "shapeId": "8",
+          "size": 19,
+          "maxChars": 211,
+          "box": {
+            "x": 0.0375,
+            "y": 0.6,
+            "w": 0.4425,
+            "h": 0.2533
+          }
+        },
+        {
+          "name": "organizationDepartment",
+          "kind": "text",
+          "shapeId": "3",
+          "size": 12,
+          "maxChars": 61,
+          "deckField": "organizationDepartment",
+          "alignOnDirectionChange": "keep"
+        }
+      ],
+      "figures": true
+    },
+    {
+      "id": "list-with-photo",
+      "sourceSlide": 4,
+      "description": "A bulleted list of key points alongside a supporting image.",
+      "slots": [
+        {
+          "name": "title",
+          "kind": "text",
+          "shapeId": "5",
+          "size": 34,
+          "maxChars": 41
+        },
+        {
+          "name": "bulletList",
+          "kind": "text",
+          "shapeId": "6",
+          "size": 22,
+          "maxChars": 369,
+          "maxParagraphs": 4
+        },
+        {
+          "name": "photo",
+          "kind": "image",
+          "imageKind": "photo",
+          "shapeId": "7"
+        },
+        {
+          "name": "organizationDepartment",
+          "kind": "text",
+          "shapeId": "3",
+          "size": 12,
+          "maxChars": 61,
+          "deckField": "organizationDepartment",
+          "alignOnDirectionChange": "keep"
+        }
+      ]
+    },
+    {
+      "id": "list-with-photo-mirrored",
+      "sourceSlide": 4,
+      "description": "A supporting image on the left with a bulleted list of key points on the right. The mirror image of list-with-photo: alternate the two for variety.",
+      "slots": [
+        {
+          "name": "title",
+          "kind": "text",
+          "shapeId": "5",
+          "size": 34,
+          "maxChars": 41
+        },
+        {
+          "name": "bulletList",
+          "kind": "text",
+          "shapeId": "6",
+          "size": 22,
+          "maxChars": 369,
+          "maxParagraphs": 4,
+          "box": {
+            "x": 0.4748,
+            "y": 0.3,
+            "w": 0.4875,
+            "h": 0.5733
+          }
+        },
+        {
+          "name": "photo",
+          "kind": "image",
+          "imageKind": "photo",
+          "shapeId": "7",
+          "box": {
+            "x": 0.0375,
+            "y": 0.2867,
+            "w": 0.3923,
+            "h": 0.5933
+          }
+        },
+        {
+          "name": "organizationDepartment",
+          "kind": "text",
+          "shapeId": "3",
+          "size": 12,
+          "maxChars": 61,
+          "deckField": "organizationDepartment",
+          "alignOnDirectionChange": "keep"
+        }
+      ]
+    },
+    {
+      "id": "icon-cards",
+      "sourceSlide": 5,
+      "description": "A row of cards, each with an icon, a heading and a short text: features, steps or categories.",
+      "slots": [
+        {
+          "name": "title",
+          "kind": "text",
+          "shapeId": "5",
+          "size": 34,
+          "maxChars": 41
+        },
+        {
+          "name": "card1Icon",
+          "kind": "image",
+          "imageKind": "icon",
+          "shapeId": "9"
+        },
+        {
+          "name": "card1Heading",
+          "kind": "text",
+          "shapeId": "10",
+          "size": 19,
+          "maxChars": 15
+        },
+        {
+          "name": "card1Text",
+          "kind": "text",
+          "shapeId": "11",
+          "size": 15,
+          "maxChars": 117
+        },
+        {
+          "name": "card2Icon",
+          "kind": "image",
+          "imageKind": "icon",
+          "shapeId": "15"
+        },
+        {
+          "name": "card2Heading",
+          "kind": "text",
+          "shapeId": "16",
+          "size": 19,
+          "maxChars": 15
+        },
+        {
+          "name": "card2Text",
+          "kind": "text",
+          "shapeId": "17",
+          "size": 15,
+          "maxChars": 117
+        },
+        {
+          "name": "card3Icon",
+          "kind": "image",
+          "imageKind": "icon",
+          "shapeId": "21"
+        },
+        {
+          "name": "card3Heading",
+          "kind": "text",
+          "shapeId": "22",
+          "size": 19,
+          "maxChars": 15
+        },
+        {
+          "name": "card3Text",
+          "kind": "text",
+          "shapeId": "23",
+          "size": 15,
+          "maxChars": 117
+        },
+        {
+          "name": "card4Icon",
+          "kind": "image",
+          "imageKind": "icon",
+          "shapeId": "27"
+        },
+        {
+          "name": "card4Heading",
+          "kind": "text",
+          "shapeId": "28",
+          "size": 19,
+          "maxChars": 15
+        },
+        {
+          "name": "card4Text",
+          "kind": "text",
+          "shapeId": "29",
+          "size": 15,
+          "maxChars": 117
+        },
+        {
+          "name": "organizationDepartment",
+          "kind": "text",
+          "shapeId": "3",
+          "size": 12,
+          "maxChars": 61,
+          "deckField": "organizationDepartment",
+          "alignOnDirectionChange": "keep"
+        }
+      ],
+      "repeat": {
+        "item": "card",
+        "slots": [
+          "card{n}Icon",
+          "card{n}Heading",
+          "card{n}Text"
+        ],
+        "shapes": [
+          [
+            "6"
+          ],
+          [
+            "12"
+          ],
+          [
+            "18"
+          ],
+          [
+            "24"
+          ]
+        ],
+        "min": 2,
+        "max": 4,
+        "widen": 2.2
+      }
+    },
+    {
+      "id": "stat-cards",
+      "sourceSlide": 6,
+      "description": "A grid of key figures, each with a short label under it.",
+      "slots": [
+        {
+          "name": "title",
+          "kind": "text",
+          "shapeId": "5",
+          "size": 34,
+          "maxChars": 41
+        },
+        {
+          "name": "stat1Number",
+          "kind": "text",
+          "shapeId": "8",
+          "size": 40,
+          "maxChars": 6
+        },
+        {
+          "name": "stat1Caption",
+          "kind": "text",
+          "shapeId": "9",
+          "size": 16,
+          "maxChars": 44
+        },
+        {
+          "name": "stat2Number",
+          "kind": "text",
+          "shapeId": "12",
+          "size": 40,
+          "maxChars": 6
+        },
+        {
+          "name": "stat2Caption",
+          "kind": "text",
+          "shapeId": "13",
+          "size": 16,
+          "maxChars": 44
+        },
+        {
+          "name": "stat3Number",
+          "kind": "text",
+          "shapeId": "16",
+          "size": 40,
+          "maxChars": 6
+        },
+        {
+          "name": "stat3Caption",
+          "kind": "text",
+          "shapeId": "17",
+          "size": 16,
+          "maxChars": 44
+        },
+        {
+          "name": "stat4Number",
+          "kind": "text",
+          "shapeId": "20",
+          "size": 40,
+          "maxChars": 6
+        },
+        {
+          "name": "stat4Caption",
+          "kind": "text",
+          "shapeId": "21",
+          "size": 16,
+          "maxChars": 44
+        },
+        {
+          "name": "stat5Number",
+          "kind": "text",
+          "shapeId": "24",
+          "size": 40,
+          "maxChars": 6
+        },
+        {
+          "name": "stat5Caption",
+          "kind": "text",
+          "shapeId": "25",
+          "size": 16,
+          "maxChars": 44
+        },
+        {
+          "name": "stat6Number",
+          "kind": "text",
+          "shapeId": "28",
+          "size": 40,
+          "maxChars": 6
+        },
+        {
+          "name": "stat6Caption",
+          "kind": "text",
+          "shapeId": "29",
+          "size": 16,
+          "maxChars": 44
+        },
+        {
+          "name": "organizationDepartment",
+          "kind": "text",
+          "shapeId": "3",
+          "size": 12,
+          "maxChars": 61,
+          "deckField": "organizationDepartment",
+          "alignOnDirectionChange": "keep"
+        }
+      ],
+      "figures": true,
+      "repeat": {
+        "item": "stat",
+        "slots": [
+          "stat{n}Number",
+          "stat{n}Caption"
+        ],
+        "shapes": [
+          [
+            "6"
+          ],
+          [
+            "10"
+          ],
+          [
+            "14"
+          ],
+          [
+            "18"
+          ],
+          [
+            "22"
+          ],
+          [
+            "26"
+          ]
+        ],
+        "min": 2,
+        "max": 6,
+        "columns": 3,
+        "widen": 1.6
+      }
+    },
+    {
+      "id": "two-columns",
+      "sourceSlide": 7,
+      "description": "Two columns side by side, each with a heading and a short list: a comparison, before and after, or two options.",
+      "slots": [
+        {
+          "name": "title",
+          "kind": "text",
+          "shapeId": "5",
+          "size": 34,
+          "maxChars": 41
+        },
+        {
+          "name": "col1Heading",
+          "kind": "text",
+          "shapeId": "7",
+          "size": 22,
+          "maxChars": 26
+        },
+        {
+          "name": "col1Text",
+          "kind": "text",
+          "shapeId": "8",
+          "size": 18,
+          "maxChars": 320,
+          "maxParagraphs": 3
+        },
+        {
+          "name": "col2Heading",
+          "kind": "text",
+          "shapeId": "10",
+          "size": 22,
+          "maxChars": 26
+        },
+        {
+          "name": "col2Text",
+          "kind": "text",
+          "shapeId": "11",
+          "size": 18,
+          "maxChars": 320,
+          "maxParagraphs": 3
+        },
+        {
+          "name": "organizationDepartment",
+          "kind": "text",
+          "shapeId": "3",
+          "size": 12,
+          "maxChars": 61,
+          "deckField": "organizationDepartment",
+          "alignOnDirectionChange": "keep"
+        }
+      ],
+      "repeat": {
+        "item": "column",
+        "slots": [
+          "col{n}Heading",
+          "col{n}Text"
+        ],
+        "shapes": [
+          [
+            "6",
+            "7",
+            "8"
+          ],
+          [
+            "9",
+            "10",
+            "11"
+          ]
+        ],
+        "min": 2,
+        "max": 2
+      }
+    },
+    {
+      "id": "table",
+      "sourceSlide": 8,
+      "description": "A full-width table layout with a header row, alternating row shading, and an optional footnote.",
+      "slots": [
+        {
+          "name": "title",
+          "kind": "text",
+          "shapeId": "5",
+          "size": 34,
+          "maxChars": 41
+        },
+        {
+          "name": "table",
+          "kind": "table",
+          "shapeId": "6",
+          "maxColumns": 4,
+          "maxRows": 4,
+          "maxCellChars": 22
+        },
+        {
+          "name": "footnote",
+          "kind": "text",
+          "shapeId": "7",
+          "size": 13,
+          "maxChars": 130,
+          "empty": "remove"
+        },
+        {
+          "name": "organizationDepartment",
+          "kind": "text",
+          "shapeId": "3",
+          "size": 12,
+          "maxChars": 61,
+          "deckField": "organizationDepartment",
+          "alignOnDirectionChange": "keep"
+        }
+      ]
+    },
+    {
+      "id": "chart-with-takeaway",
+      "sourceSlide": 9,
+      "description": "A supplied chart or diagram picture on the left, with a short explanation and an optional takeaway on the right.",
+      "slots": [
+        {
+          "name": "title",
+          "kind": "text",
+          "shapeId": "5",
+          "size": 34,
+          "maxChars": 41
+        },
+        {
+          "name": "chartGraphic",
+          "kind": "image",
+          "imageKind": "graphic",
+          "shapeId": "6"
+        },
+        {
+          "name": "chartDescription",
+          "kind": "text",
+          "shapeId": "7",
+          "size": 18,
+          "maxChars": 243
+        },
+        {
+          "name": "takeawayText",
+          "kind": "text",
+          "shapeId": "8",
+          "size": 17,
+          "maxChars": 160,
+          "empty": "remove"
+        },
+        {
+          "name": "organizationDepartment",
+          "kind": "text",
+          "shapeId": "3",
+          "size": 12,
+          "maxChars": 61,
+          "deckField": "organizationDepartment",
+          "alignOnDirectionChange": "keep"
+        }
+      ],
+      "figures": true
+    },
+    {
+      "id": "chart-native",
+      "sourceSlide": 9,
+      "description": "A native, editable chart on the left with a short explanation and an optional takeaway on the right. Use it when the brief gives the numbers to chart.",
+      "slots": [
+        {
+          "name": "title",
+          "kind": "text",
+          "shapeId": "5",
+          "size": 34,
+          "maxChars": 41
+        },
+        {
+          "name": "chart",
+          "kind": "chart",
+          "shapeId": "6",
+          "maxCategories": 8,
+          "maxSeries": 3,
+          "colors": [
+            "0E7C7B",
+            "F4A259",
+            "1B2A41"
+          ],
+          "text": {
+            "size": 12,
+            "color": "5C6B73",
+            "font": "Calibri"
+          },
+          "lineColor": "D9E2E1"
+        },
+        {
+          "name": "chartDescription",
+          "kind": "text",
+          "shapeId": "7",
+          "size": 18,
+          "maxChars": 243
+        },
+        {
+          "name": "takeawayText",
+          "kind": "text",
+          "shapeId": "8",
+          "size": 17,
+          "maxChars": 160,
+          "empty": "remove"
+        },
+        {
+          "name": "organizationDepartment",
+          "kind": "text",
+          "shapeId": "3",
+          "size": 12,
+          "maxChars": 61,
+          "deckField": "organizationDepartment",
+          "alignOnDirectionChange": "keep"
+        }
+      ],
+      "figures": true
+    },
+    {
+      "id": "wide-diagram",
+      "sourceSlide": 10,
+      "description": "A wide diagram or graphic centered on the slide with a top title and a bottom caption.",
+      "slots": [
+        {
+          "name": "title",
+          "kind": "text",
+          "shapeId": "5",
+          "size": 34,
+          "maxChars": 41
+        },
+        {
+          "name": "diagramGraphic",
+          "kind": "image",
+          "imageKind": "graphic",
+          "shapeId": "6"
+        },
+        {
+          "name": "diagramCaption",
+          "kind": "text",
+          "shapeId": "7",
+          "size": 14,
+          "maxChars": 120,
+          "empty": "remove"
+        },
+        {
+          "name": "organizationDepartment",
+          "kind": "text",
+          "shapeId": "3",
+          "size": 12,
+          "maxChars": 61,
+          "deckField": "organizationDepartment",
+          "alignOnDirectionChange": "keep"
+        }
+      ]
+    },
+    {
+      "id": "quote",
+      "sourceSlide": 11,
+      "description": "A quote or impactful statement slide with attribution.",
+      "slots": [
+        {
+          "name": "quoteText",
+          "kind": "text",
+          "shapeId": "6",
+          "size": 32,
+          "maxChars": 180
+        },
+        {
+          "name": "quoteAuthor",
+          "kind": "text",
+          "shapeId": "7",
+          "size": 17,
+          "maxChars": 60,
+          "empty": "remove"
+        },
+        {
+          "name": "organizationDepartment",
+          "kind": "text",
+          "shapeId": "3",
+          "size": 12,
+          "maxChars": 61,
+          "deckField": "organizationDepartment",
+          "alignOnDirectionChange": "keep"
+        }
+      ]
+    },
+    {
+      "id": "section",
+      "sourceSlide": 12,
+      "description": "A section header layout with a title and brief explanatory subtitle against a dark background.",
+      "slots": [
+        {
+          "name": "title",
+          "kind": "text",
+          "shapeId": "4",
+          "size": 50,
+          "maxChars": 20
+        },
+        {
+          "name": "subtitle",
+          "kind": "text",
+          "shapeId": "5",
+          "size": 20,
+          "maxChars": 144,
+          "empty": "remove"
+        }
+      ]
+    },
+    {
+      "id": "closing",
+      "sourceSlide": 13,
+      "description": "Closing slide with a large thank-you title and space for contact details or next steps.",
+      "slots": [
+        {
+          "name": "title",
+          "kind": "text",
+          "shapeId": "5",
+          "size": 56,
+          "maxChars": 17
+        },
+        {
+          "name": "subtitle",
+          "kind": "text",
+          "shapeId": "6",
+          "size": 20,
+          "maxChars": 144,
+          "empty": "remove"
+        },
+        {
+          "name": "organizationDepartment",
+          "kind": "text",
+          "shapeId": "7",
+          "size": 13,
+          "maxChars": 61,
+          "deckField": "organizationDepartment",
+          "alignOnDirectionChange": "keep"
+        }
+      ]
+    }
+  ],
+  "language": "en"
+}

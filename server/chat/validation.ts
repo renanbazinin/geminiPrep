@@ -11,6 +11,7 @@ import { IMAGE_MODEL_ID, IMAGE_MODEL_REGION, isChatToolId, normalizeImageMimeTyp
 import { parseInteractionOptions } from "../../shared/interactions.js";
 import { gemini4RegionProblem, isGemini4Model } from "../../shared/gemini-4.js";
 import { isDocumentId } from "../../packages/large-files/src/index.js";
+import { PRESENTATION_TEMPLATE_ID } from "../../shared/presentations.js";
 
 const MAX_HISTORY_MESSAGES = 200;
 const MAX_TOTAL_CHARACTERS = 1_000_000;
@@ -60,7 +61,12 @@ export function validateChatRequest(
   }
   let tool: ChatToolId | undefined;
   if (input.tool !== undefined && input.tool !== "") {
-    tool = isChatToolId(input.tool) ? input.tool : fail("tool must be image or graph.");
+    tool = isChatToolId(input.tool) ? input.tool : fail("tool must be image, graph or presentation.");
+  }
+  let presentationTemplate: string | undefined;
+  if (input.presentationTemplate !== undefined && input.presentationTemplate !== "") {
+    if (typeof input.presentationTemplate !== "string" || !PRESENTATION_TEMPLATE_ID.test(input.presentationTemplate)) fail("Invalid presentationTemplate.");
+    presentationTemplate = input.presentationTemplate;
   }
 
   if (typeof input.model !== "string" || !input.model.trim()) fail("model is required.");
@@ -228,6 +234,7 @@ export function validateChatRequest(
     ...(thinkingLevel ? { thinkingLevel } : {}),
     ...(tool ? { tool } : {}),
     ...(cachedContent ? { cachedContent } : {}),
+    ...(presentationTemplate ? { presentationTemplate } : {}),
     messages,
   };
 }

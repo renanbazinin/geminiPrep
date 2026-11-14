@@ -1,0 +1,196 @@
+/* PPTX Studio: the list of templates, and the editor of one. */
+.studio-page { padding-top: 60px; }
+.studio-editor { width: min(1400px, calc(100% - 56px)); }
+.studio-note { margin: 16px 0 0; color: var(--subtle); font-size: 0.78rem; line-height: 1.55; }
+.studio-back { display: inline-flex; align-items: center; gap: 6px; margin-bottom: 18px; color: var(--muted); font-size: 0.78rem; text-decoration: none; }
+.studio-back:hover { color: var(--text); }
+.studio-input { width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; outline: 0; background: var(--surface); color: var(--text); font-size: 0.8rem; }
+.studio-input:focus { border-color: #625a91; box-shadow: 0 0 0 2px rgba(157, 140, 255, 0.08); }
+.studio-input:disabled { opacity: 0.6; }
+textarea.studio-input { resize: vertical; line-height: 1.45; }
+.studio-disabled { pointer-events: none; opacity: 0.45; }
+
+/* New template */
+.studio-upload { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 22px; margin: 28px 0 8px; padding: 18px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); }
+.studio-upload-copy { display: grid; grid-template-columns: 42px minmax(0, 1fr); gap: 14px; }
+.studio-upload-icon { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 11px; background: #25213c; color: var(--accent-strong); }
+.studio-upload h2 { margin: 0 0 5px; font: 600 1rem "Manrope", sans-serif; }
+.studio-upload p { margin: 0; color: var(--muted); font-size: 0.79rem; line-height: 1.55; }
+.studio-upload-form { display: grid; grid-template-columns: repeat(2, minmax(0, 190px)); align-items: center; gap: 8px; }
+.studio-upload-form .secondary-button { justify-content: flex-start; overflow: hidden; text-overflow: ellipsis; }
+.studio-upload-form .secondary-button svg { flex: none; }
+
+/* Template cards */
+.studio-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
+.studio-card { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); overflow: hidden; }
+.studio-card:hover { border-color: #4a5260; }
+.studio-card-active { border-color: #6a61a3; box-shadow: inset 0 0 0 1px rgba(157, 140, 255, 0.18); }
+.studio-card-open { display: block; padding: 14px 14px 10px; color: inherit; text-decoration: none; }
+.studio-preview { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; min-height: 58px; margin-bottom: 13px; }
+.studio-preview-empty { display: grid; place-items: center; border: 1px dashed var(--border); border-radius: 8px; color: var(--subtle); font-size: 0.72rem; }
+.studio-card-title { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--muted); }
+.studio-card-title h2 { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); font: 600 1rem "Manrope", sans-serif; }
+.studio-card-meta { margin: 5px 0 0; color: var(--muted); font-size: 0.74rem; line-height: 1.5; }
+.studio-card-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: auto; padding: 10px 14px 13px; border-top: 1px solid var(--border-soft); }
+.studio-card-actions { display: flex; align-items: center; gap: 6px; }
+.studio-badges { display: flex; flex-wrap: wrap; gap: 5px; }
+.studio-badge { display: inline-flex; align-items: center; gap: 4px; padding: 3px 7px; border: 1px solid var(--border); border-radius: 999px; color: var(--muted); font-size: 0.64rem; }
+.studio-badge-bad { border-color: #773942; color: var(--danger); }
+.studio-badge-warn { border-color: #594726; color: var(--warning); }
+.studio-in-chat { display: inline-flex; align-items: center; gap: 5px; padding: 8px 4px; color: var(--success); font-size: 0.76rem; font-weight: 600; white-space: nowrap; }
+
+/* Editor header */
+.studio-editor-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; padding-bottom: 20px; border-bottom: 1px solid var(--border-soft); }
+.studio-editor-head h1 { margin: 0; font: 600 clamp(1.7rem, 3vw, 2.4rem) "Manrope", sans-serif; letter-spacing: -0.035em; }
+.studio-head-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 7px; }
+
+/* Draft, and changes in words */
+.studio-ai { margin-top: 18px; padding: 16px; border: 1px solid #3d3766; border-radius: 14px; background: #15141f; }
+.studio-draft-call { display: flex; align-items: center; justify-content: space-between; gap: 22px; }
+.studio-draft-call h2 { margin: 0 0 5px; font: 600 1rem "Manrope", sans-serif; }
+.studio-draft-call p { margin: 0; max-width: 720px; color: var(--muted); font-size: 0.8rem; line-height: 1.55; }
+.studio-instruct { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 14px; }
+.studio-instruct-actions { display: flex; flex-direction: column; align-items: stretch; gap: 4px; }
+.studio-progress { display: flex; align-items: center; gap: 8px; margin: 12px 0 0; color: var(--muted); font-size: 0.78rem; }
+.studio-progress-bar { width: 100%; height: 5px; margin-top: 9px; accent-color: var(--accent); }
+.studio-log { margin: 14px 0 0; padding: 0; list-style: none; display: grid; gap: 5px; }
+.studio-log li { display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: 8px; padding: 8px 11px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); font-size: 0.78rem; line-height: 1.45; }
+.studio-log svg { margin-top: 2px; }
+.studio-log-ok svg { color: var(--success); }
+.studio-log-no { border-color: #5b492b; color: #e8c88d; }
+
+/* The two parts of a template: its layouts, and its files */
+.studio-maintabs { display: flex; gap: 4px; margin-top: 22px; border-bottom: 1px solid var(--border-soft); }
+.studio-maintabs button { display: inline-flex; align-items: center; gap: 7px; margin-bottom: -1px; padding: 10px 14px; border: 1px solid transparent; border-bottom: 0; border-radius: 9px 9px 0 0; background: transparent; color: var(--muted); font-size: 0.82rem; font-weight: 600; cursor: pointer; }
+.studio-maintabs button:hover { color: var(--text); }
+.studio-maintabs button.is-selected { border-color: var(--border-soft); background: var(--surface); color: var(--text); box-shadow: 0 1px 0 var(--surface); }
+.studio-files { display: grid; grid-template-columns: minmax(0, 2fr) minmax(260px, 1fr); align-items: start; gap: 16px; margin-top: 20px; }
+.studio-files h3 { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
+.studio-json { min-height: 540px; font: 0.74rem/1.5 "Cascadia Code", Consolas, monospace; white-space: pre; overflow: auto; tab-size: 2; }
+.studio-json[readonly] { color: var(--muted); }
+.studio-json-status { margin: 0; color: var(--subtle); font-size: 0.74rem; }
+.studio-json-status.is-bad { color: var(--danger); }
+.studio-file-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
+.studio-file-actions .primary-button { padding: 9px 13px; }
+
+/* Workspace: slides, the slide, the inspector */
+.studio-workspace { display: grid; grid-template-columns: 172px minmax(0, 1fr) 330px; align-items: start; gap: 18px; margin-top: 20px; }
+.studio-workspace[hidden] { display: none; }
+.studio-viewbar { display: inline-flex; margin-bottom: 9px; padding: 3px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); }
+.studio-viewbar button { padding: 5px 11px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); font-size: 0.74rem; font-weight: 600; cursor: pointer; }
+.studio-viewbar button:hover:not(:disabled) { color: var(--text); }
+.studio-viewbar button.is-selected { background: #24213d; color: var(--accent-strong); }
+.studio-viewbar button:disabled { opacity: 0.4; cursor: not-allowed; }
+.studio-slide-button .slide-picture { border-radius: 4px; }
+.studio-preview .slide-picture { border-radius: 4px; }
+.studio-slides { display: flex; flex-direction: column; gap: 8px; max-height: 76vh; padding-right: 4px; overflow-y: auto; scrollbar-width: thin; }
+.studio-slide-button { display: flex; flex-direction: column; gap: 5px; padding: 6px; border: 1px solid transparent; border-radius: 9px; background: transparent; color: var(--muted); font-size: 0.68rem; text-align: left; cursor: pointer; }
+.studio-slide-button:hover { background: var(--surface-2); }
+.studio-slide-button.is-selected { border-color: #6a61a3; background: #1a1830; color: var(--text); }
+.studio-slide-button.is-unused .slide-wireframe { opacity: 0.45; }
+.studio-slide-button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.studio-slide-button b { color: var(--text); }
+.studio-stage { min-width: 0; }
+.studio-tabs { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 9px; }
+.studio-tabs button { padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--muted); font: 600 0.72rem "Cascadia Code", Consolas, monospace; cursor: pointer; }
+.studio-tabs button.is-selected { border-color: #6a61a3; background: #24213d; color: var(--accent-strong); }
+.studio-canvas { position: relative; width: 100%; overflow: hidden; border: 1px solid #cfd3dc; border-radius: 10px; background: #f3f4f8; }
+.studio-shape { position: absolute; display: block; min-height: 3px; padding: 2px 4px; overflow: hidden; border: 1px solid transparent; border-radius: 4px; background: transparent; color: #1d2030; font-size: 0.66rem; line-height: 1.25; text-align: left; cursor: pointer; }
+.studio-shape span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.studio-shape:hover { filter: brightness(0.94); box-shadow: 0 0 0 1px #1d2030; }
+.studio-shape.is-selected { box-shadow: 0 0 0 2px #1d2030, 0 0 0 4px rgba(157, 140, 255, 0.75); z-index: 2; }
+.studio-shape-text { border-color: #6f63c1; background: rgba(111, 99, 193, 0.2); font-weight: 600; }
+.studio-shape-image { border-color: #2a9d8f; background: rgba(42, 157, 143, 0.22); font-weight: 600; }
+.studio-shape-table { border-color: #c9962f; background: rgba(201, 150, 47, 0.24); font-weight: 600; }
+.studio-shape-chart { border-color: #d9693a; background: rgba(217, 105, 58, 0.22); font-weight: 600; }
+.studio-shape-drop { border: 1px dashed #b04a57; background: repeating-linear-gradient(45deg, rgba(176, 74, 87, 0.12) 0 6px, transparent 6px 12px); color: #8a3a45; }
+.studio-shape-design { background: rgba(120, 128, 145, 0.16); color: #6a7183; }
+.studio-shape-frame { border: 1px dotted #9aa1b1; background: rgba(120, 128, 145, 0.1); color: #6a7183; }
+.studio-shape-line { background: #b9bfcb; }
+/* Over the server's picture of the slide: the shapes are outlines, and a slot carries its name as a tag. */
+.studio-canvas-picture { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; border-radius: 0; background: #fff; pointer-events: none; }
+.studio-canvas-pictured .studio-shape { padding: 0; overflow: visible; font-weight: 600; }
+.studio-canvas-pictured .studio-shape span { position: absolute; left: -1px; top: -1px; max-width: calc(100% + 2px); padding: 1px 5px; border-radius: 3px 0 3px 0; color: #fff; font-size: 0.6rem; line-height: 1.35; }
+.studio-canvas-pictured .studio-shape span:empty { display: none; }
+.studio-canvas-pictured .studio-shape-text { background: rgba(111, 99, 193, 0.1); }
+.studio-canvas-pictured .studio-shape-text span { background: #6f63c1; }
+.studio-canvas-pictured .studio-shape-image { background: rgba(42, 157, 143, 0.12); }
+.studio-canvas-pictured .studio-shape-image span { background: #2a9d8f; }
+.studio-canvas-pictured .studio-shape-table { background: rgba(201, 150, 47, 0.12); }
+.studio-canvas-pictured .studio-shape-table span { background: #b0801f; }
+.studio-canvas-pictured .studio-shape-chart { background: rgba(217, 105, 58, 0.12); }
+.studio-canvas-pictured .studio-shape-chart span { background: #d9693a; }
+.studio-canvas-pictured .studio-shape-drop span { background: #b04a57; }
+.studio-canvas-pictured .studio-shape-design, .studio-canvas-pictured .studio-shape-frame, .studio-canvas-pictured .studio-shape-line { border-color: transparent; background: transparent; }
+.studio-canvas-pictured .studio-shape-design:hover, .studio-canvas-pictured .studio-shape-frame:hover { border: 1px dotted #6a7183; filter: none; box-shadow: none; }
+.studio-legend { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 9px; color: var(--subtle); font-size: 0.68rem; }
+.studio-key { display: inline-flex; align-items: center; gap: 5px; }
+.studio-key::before { content: ""; width: 11px; height: 11px; border: 1px solid; border-radius: 3px; }
+.studio-key-text::before { border-color: #6f63c1; background: rgba(111, 99, 193, 0.5); }
+.studio-key-image::before { border-color: #2a9d8f; background: rgba(42, 157, 143, 0.5); }
+.studio-key-table::before { border-color: #c9962f; background: rgba(201, 150, 47, 0.5); }
+.studio-key-chart::before { border-color: #d9693a; background: rgba(217, 105, 58, 0.5); }
+.studio-key-drop::before { border: 1px dashed #b04a57; }
+.studio-key-design::before { border-color: #6a7183; background: rgba(120, 128, 145, 0.4); }
+.studio-slotlist { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 12px; }
+.studio-slot { padding: 4px 8px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); color: #d9dde3; font: 0.7rem "Cascadia Code", Consolas, monospace; cursor: pointer; }
+.studio-slot:hover { border-color: #4b5462; }
+.studio-slot.is-selected { box-shadow: 0 0 0 2px rgba(157, 140, 255, 0.6); }
+.studio-slot-text { border-left: 3px solid #6f63c1; }
+.studio-slot-image { border-left: 3px solid #2a9d8f; }
+.studio-slot-table { border-left: 3px solid #c9962f; }
+.studio-slot-chart { border-left: 3px solid #d9693a; }
+.studio-slot-drop { border-left: 3px dashed #b04a57; color: var(--subtle); }
+
+/* Inspector and lower panels */
+.studio-inspector { display: grid; gap: 12px; }
+.studio-panel { display: flex; flex-direction: column; align-items: flex-start; gap: 11px; padding: 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
+.studio-panel > * { max-width: 100%; }
+.studio-panel h3 { margin: 0; font: 600 0.88rem "Manrope", sans-serif; }
+.studio-panel h3 small { margin-left: 6px; color: var(--subtle); font: 400 0.7rem "DM Sans", sans-serif; }
+.studio-hint { margin: 0; color: var(--subtle); font-size: 0.74rem; line-height: 1.5; }
+.studio-sample { margin: 0; color: var(--muted); font-size: 0.76rem; font-style: italic; line-height: 1.45; overflow-wrap: anywhere; }
+.studio-slot-line { margin: 0; font-size: 0.8rem; line-height: 1.45; }
+.studio-slot-line strong { font-family: "Cascadia Code", Consolas, monospace; font-size: 0.76rem; color: var(--accent-strong); }
+.studio-roles { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
+.studio-roles > span { width: 100%; color: var(--muted); font-size: 0.72rem; }
+.studio-chip-button { padding: 4px 9px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface-2); color: #d9dde3; font-size: 0.7rem; cursor: pointer; }
+.studio-chip-button:hover:not(:disabled) { border-color: #6a61a3; color: var(--accent-strong); }
+.studio-chip-button:disabled { opacity: 0.5; cursor: not-allowed; }
+.studio-field { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 5px; width: 100%; color: var(--muted); font-size: 0.72rem; }
+.studio-field-number { flex: 0 0 76px; width: 76px; }
+.studio-stack { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; width: 100%; }
+.studio-inline { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; width: 100%; }
+.studio-inline-label { width: 100%; color: var(--muted); font-size: 0.72rem; }
+.studio-check { display: flex; align-items: flex-start; gap: 9px; font-size: 0.78rem; cursor: pointer; }
+.studio-check input { margin-top: 3px; accent-color: var(--accent-strong); }
+.studio-check small { display: block; margin-top: 2px; color: var(--subtle); font-size: 0.7rem; line-height: 1.4; }
+.studio-variants { display: flex; flex-direction: column; gap: 7px; width: 100%; }
+.studio-refused { color: var(--subtle); font-size: 0.72rem; line-height: 1.45; }
+.studio-refused summary { cursor: pointer; }
+.studio-refused ul { margin: 6px 0 0; padding-inline-start: 18px; }
+.studio-refused li + li { margin-top: 4px; }
+.studio-lower { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); align-items: start; gap: 14px; margin-top: 22px; }
+.studio-ok { display: flex; align-items: center; gap: 7px; margin: 0; color: var(--success); font-size: 0.78rem; }
+.studio-issues { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; width: 100%; }
+.studio-issues li { display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: 8px; font-size: 0.76rem; line-height: 1.45; }
+.studio-issues svg { margin-top: 2px; }
+.studio-issues .is-error { color: var(--danger); }
+.studio-issues .is-warning { color: var(--warning); }
+.studio-issues strong { font-family: "Cascadia Code", Consolas, monospace; font-size: 0.72rem; }
+
+@media (max-width: 1180px) {
+  .studio-upload { grid-template-columns: 1fr; }
+  .studio-workspace { grid-template-columns: 150px minmax(0, 1fr); }
+  .studio-inspector { grid-column: 1 / -1; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+}
+@media (max-width: 760px) {
+  .studio-editor { width: min(100% - 28px, 1400px); }
+  .studio-upload, .studio-instruct, .studio-files { grid-template-columns: 1fr; }
+  .studio-draft-call, .studio-editor-head { flex-direction: column; align-items: stretch; }
+  .studio-upload-form { grid-template-columns: 1fr; }
+  .studio-head-actions { justify-content: flex-start; }
+  .studio-workspace { grid-template-columns: 1fr; }
+  .studio-slides { flex-direction: row; max-height: none; overflow-x: auto; padding: 0 0 6px; }
+  .studio-slide-button { flex: 0 0 132px; }
+}

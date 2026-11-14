@@ -4,6 +4,7 @@ import {
   MessageSquarePlus,
   MoreHorizontal,
   PanelLeftClose,
+  Presentation,
   Settings,
   Trash2,
   Ticket,
@@ -75,7 +76,8 @@ export function AppShell() {
     setManageDialog(null);
   }
 
-  const pageTitle = location.pathname === "/jira" ? "DeskFlow · Jira" : location.pathname === "/special-group" ? "Special Group" : location.pathname === "/settings"
+  const pageTitle = location.pathname === "/jira" ? "DeskFlow · Jira" : location.pathname === "/special-group" ? "Special Group"
+    : location.pathname.startsWith("/pptx-studio") ? "PPTX Studio" : location.pathname === "/settings"
     ? "Settings"
     : location.pathname === "/tests/cache"
       ? "Cache test"
@@ -154,6 +156,9 @@ export function AppShell() {
           </NavLink>
           <NavLink to="/special-group" className={({ isActive }) => `sidebar-link${isActive ? " sidebar-link-active" : ""}`} onClick={() => setDrawerOpen(false)}>
             <Users size={18} /><span>Special Group</span>
+          </NavLink>
+          <NavLink to="/pptx-studio" className={({ isActive }) => `sidebar-link${isActive ? " sidebar-link-active" : ""}`} onClick={() => setDrawerOpen(false)}>
+            <Presentation size={18} /><span>PPTX Studio</span>
           </NavLink>
           <NavLink to="/tests" className={({ isActive }) => `sidebar-link${isActive ? " sidebar-link-active" : ""}`} onClick={() => setDrawerOpen(false)}>
             <FlaskConical size={18} />

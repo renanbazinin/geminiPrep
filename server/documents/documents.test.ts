@@ -625,7 +625,7 @@ describe("pages of a kept PDF (npm engine)", () => {
     vi.stubEnv("LARGE_FILES_KEEP_PDFS", "0");
     await request(app).post("/api/chat/stream").send(reportBody(meta.id));
     expect(JSON.stringify(bodies[1])).not.toContain("view_pages");
-    expect(bodies[1].tools[0].functionDeclarations.map((tool) => tool.name)).toEqual(["generate_image", "generate_graph"]);
+    expect(bodies[1].tools[0].functionDeclarations.map((tool) => tool.name)).toEqual(["generate_image", "generate_graph", "make_presentation"]);
     expect(turnText(bodies[1].contents[0])).toContain("Figure 1: sales by region (chart)");
   });
 
@@ -640,7 +640,7 @@ describe("pages of a kept PDF (npm engine)", () => {
     const upload = await request(app).post("/api/documents").set("Content-Type", "application/octet-stream").set("X-File-Name", "app.log").send(Buffer.from(log(500)));
     await request(app).post("/api/chat/stream").send(chatBody(upload.body.id));
     expect(fetchImpl).toHaveBeenCalledTimes(1);
-    expect(bodies[0].tools[0].functionDeclarations.map((tool) => tool.name)).toEqual(["generate_image", "generate_graph"]);
+    expect(bodies[0].tools[0].functionDeclarations.map((tool) => tool.name)).toEqual(["generate_image", "generate_graph", "make_presentation"]);
     expect(turnText(bodies[0].contents[0])).toContain("deadlock detected on table orders (tx 250)");
   });
 

@@ -24,6 +24,7 @@ export async function streamChatWithRecovery(
       onThinking(text) { generationStarted = true; handlers.onThinking?.(text); },
       onGrounding(data) { generationStarted = true; handlers.onGrounding?.(data); },
       onTool(tool) { generationStarted = true; return handlers.onTool?.(tool); },
+      onPresentation(card) { generationStarted = true; handlers.onPresentation?.(card); },
       onError(error) {
         if (!generationStarted && request.previousInteractionId && request.interactions?.stateful
           && request.interactions.store && error.code === "interaction_reference_invalid"

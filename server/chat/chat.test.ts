@@ -282,6 +282,7 @@ describe("provider request adapters", () => {
     expect(body.tools[0].functionDeclarations.map((entry) => entry.name)).toEqual([
       "generate_image",
       "generate_graph",
+      "make_presentation",
     ]);
     expect(body.toolConfig.functionCallingConfig.mode).toBe("AUTO");
     expect(body.generationConfig).not.toHaveProperty("responseModalities");

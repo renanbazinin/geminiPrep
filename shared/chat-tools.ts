@@ -1,4 +1,4 @@
-import type { ChatImageMimeType, ChatStreamRequest, ChatToolId } from "./contracts.js";
+import type { ChatImageMimeType, ChatPresentationCard, ChatStreamRequest, ChatToolId } from "./contracts.js";
 
 export const IMAGE_MODEL_ID = "gemini-3.1-flash-image";
 export const IMAGE_MODEL_REGION = "global";
@@ -72,7 +72,40 @@ export const CHAT_HANDOFF_TOOLS: ChatHandoffTool[] = [
       },
     },
   },
+  {
+    name: "make_presentation",
+    kind: "handoff",
+    toolId: "presentation",
+    argumentKey: "request",
+    declaration: {
+      name: "make_presentation",
+      description: "Plan, create or change a PowerPoint presentation (a slide deck, a pptx file). Use when the user asks for a presentation, a deck or slides, approves or changes a presentation plan, or wants to change a presentation made earlier in this conversation.",
+      parameters: {
+        type: "object",
+        properties: {
+          request: {
+            type: "string",
+            description: "What the user wants done, in their words.",
+          },
+        },
+        required: ["request"],
+      },
+    },
+  },
 ];
+
+/** How a plan or deck from an earlier turn is told to the model again: a note after that turn's text. */
+export const PRESENTATION_NOTE_PREFIX = "[presentation tool result]";
+
+export function presentationNote(card: Pick<ChatPresentationCard, "context">): string {
+  return `${PRESENTATION_NOTE_PREFIX} ${card.context}`;
+}
+
+/** A message's text with the notes of the plans and decks made in it, as sent back on later turns. */
+export function contentWithPresentationNotes(content: string, cards: ChatPresentationCard[] | undefined): string {
+  if (!cards?.length) return content;
+  return [content.trim(), ...cards.map(presentationNote)].filter(Boolean).join("\n\n");
+}
 
 export function chatFunctionDeclarations(): ChatHandoffTool["declaration"][] {
   return CHAT_HANDOFF_TOOLS.map((tool) => tool.declaration);
@@ -107,6 +140,8 @@ export function specialistRequestFromHandoff(
     };
   }
   const { cachedContent: _cachedContent, ...rest } = request;
+  // The presentation tools read the conversation as the user wrote it, so nothing is rewritten.
+  if (handoff.toolId === "presentation") return { ...rest, tool: "presentation" };
   return {
     ...rest,
     tool: "graph",
@@ -115,7 +150,7 @@ export function specialistRequestFromHandoff(
 }
 
 export function isChatToolId(value: unknown): value is ChatToolId {
-  return value === "image" || value === "graph";
+  return value === "image" || value === "graph" || value === "presentation";
 }
 
 export function normalizeImageMimeType(value: string): ChatImageMimeType | null {

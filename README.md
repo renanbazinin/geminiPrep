@@ -91,11 +91,33 @@ package by default. `LARGE_FILES_ENGINE` picks the implementation:
 Both engines store files the same way and stream the same events to the browser, so switching
 only needs a server restart. The startup log names the engine in use.
 
+**Presentations.** The chat makes PowerPoint decks with the
+[`slotdeck`](https://www.npmjs.com/package/slotdeck) npm package: it clones the slides of a template
+pptx and fills their slots, so the design is never redrawn. Pick **Make a presentation** in the
+composer's tools menu (with Generate Content and tools on Auto, just ask for a deck). Gemini first
+**plans** the slides and shows the plan as a card of layouts; **Create presentation** (or a message
+with changes) comes next, and a created deck can be **changed** by instruction: "shorten slide 3",
+"add a table before the closing slide". Only the slides a change touches are rewritten. The chat
+model handles ids and short summaries only; plans, deck JSON, pictures and the files stay on the
+server.
+
+Templates are kept in **PPTX Studio** (`/pptx-studio`), which is also where the manifest of each is
+controlled. Put a .pptx of sample slides there, with its manifest when it has one. Without one, the
+model drafts which slides are layouts and what each shape is for, from the shapes as measured in
+the file (positions, sizes, fonts, sample text). No picture of a slide is sent to the model. The
+studio shows the real slides with their slots marked, drawn on the server with the Pagus library,
+and each layout as a deck will show it. Change the manifest by clicking shapes, by instruction, with
+one-click variants (a mirror image, a text-only version), or as the JSON it is; replace the .pptx
+when the deck was edited in PowerPoint. Then download a sample deck that fills every slot
+to its budget, and choose the template the chat uses. A demo template ships with the app. The
+[presentations guide](docs/guides/presentations.en.md) explains the flow, the settings
+(`PRESENTATIONS_*` in `.env.example`) and what was checked live.
+
 ## Run locally
 
 Requirements:
 
-- Node.js 22+
+- Node.js 22.18+ (the `slotdeck` package needs it)
 - `GEMINI_API_KEY` for Gemini Developer API chat (not needed for Vertex Interactions)
 - For Vertex chat and labs: a Google Cloud project with Vertex AI enabled and
   Application Default Credentials (`gcloud auth application-default login`)
@@ -135,13 +157,16 @@ Run it again after changing `.env` or the code.
 
 On Cloud Run the service runs a single instance, and uploaded large files are kept in that
 instance's memory, so they are lost when it restarts. Uploads are limited to 30 MB by Cloud Run.
+The same holds for templates put in PPTX Studio and for the decks the chat made: download a
+template's manifest to keep it, and put a template that should survive in `presentation-templates/`
+(see the [presentations guide](docs/guides/presentations.en.md)).
 
 The foot of the sidebar shows what runs: the `version` in `package.json`, the commit (linked on
 GitHub) and the day of the deploy. The image has no git, so the script sets `APP_COMMIT` and
 `APP_DEPLOYED_AT` on the service; a commit that ends in `-dirty` means the deployed files had
 changes that were not committed. A local run shows the commit of its checkout. Under that line is
-the installed version of `llm-large-files`, linked on npm. It is not shown while
-`LARGE_FILES_ENGINE` is `original`, because the package then serves nothing.
+the installed version of `llm-large-files` and of `slotdeck`, each linked on npm. `llm-large-files`
+is not shown while `LARGE_FILES_ENGINE` is `original`, because the package then serves nothing.
 
 ## Local data and credentials
 
@@ -158,6 +183,7 @@ the installed version of `llm-large-files`, linked on npm. It is not shown while
 - `/settings` — provider, model, memory/storage, tools, reasoning, structured output, image, and generation controls
 - `/jira` — DeskFlow Jira space with live tickets and chat actions; see [setup and behavior](docs/guides/jira-demo.en.md)
 - `/special-group` — read-only Jira ticket assistant that drafts tickets and opens them prefilled in Jira. The general pattern (read-only Jira → prefilled create link → any chatbot) is in four short guides: [English](docs/guides/jira-ticket-links/01-read-only-access.en.md) · [Hebrew](docs/guides/jira-ticket-links/01-read-only-access.he.md)
+- `/pptx-studio` — PPTX Studio: the templates of the chat's presentation tools, and the manifest of each; see the [presentations guide](docs/guides/presentations.en.md)
 - `/tests` — bilingual English/Hebrew test lab index
 - `/tests/regions` — live Vertex model-by-region availability matrix
 - `/tests/cache` — Gemini 3 explicit context-cache lifecycle and cache-hit lab

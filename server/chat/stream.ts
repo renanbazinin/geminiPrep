@@ -2,6 +2,8 @@ import type { Response } from "express";
 import type { ChatStreamEvent, ChatStreamRequest } from "../../shared/contracts.js";
 import { handoffForFunctionCall, specialistRequestFromHandoff } from "../../shared/chat-tools.js";
 import { getVertexAccessToken } from "../vertex-auth.js";
+import { proxyPresentationChat } from "../presentations/chat.js";
+import { TemplateLibrary } from "../presentations/templates.js";
 import { proxyInteractionStream } from "./interactions.js";
 import {
   createUpstreamRequest,
@@ -126,8 +128,13 @@ export async function proxyChatStream(options: {
   response: Response;
   fetchImpl?: typeof fetch;
   signal?: AbortSignal;
+  /** The presentation templates. Defaults to the ones on this server's disk. */
+  presentations?: TemplateLibrary;
 }): Promise<void> {
   const { request, project, response, fetchImpl = fetch, signal } = options;
+  const library = () => options.presentations ?? new TemplateLibrary();
+  // The presentation tools run their own tool loop, on Generate Content whichever API is selected.
+  if (request.tool === "presentation") return proxyPresentationChat({ request, project, response, library: library(), fetchImpl, signal });
   if (request.interactions) return proxyInteractionStream({ request, project, response, fetchImpl, signal });
   const serverStartedMs = Date.now();
   const serverStartedAt = new Date(serverStartedMs).toISOString();
@@ -186,6 +193,24 @@ export async function proxyChatStream(options: {
         ...(specialist.region ? { region: specialist.region } : {}),
       },
     });
+    if (handoff.toolId === "presentation") {
+      // Not one more model answer but a tool loop of its own, which also ends the stream.
+      await proxyPresentationChat({
+        request: specialist,
+        project,
+        response,
+        library: library(),
+        fetchImpl,
+        signal,
+        resumed: {
+          startedMs: serverStartedMs,
+          chunkCount: planner.chunkCount,
+          textCharacters: planner.textCharacters,
+          ...(planner.firstTokenMs === undefined ? {} : { firstTokenMs: planner.firstTokenMs }),
+        },
+      });
+      return;
+    }
     hop = await streamUpstreamHop({
       request: specialist,
       project,

@@ -37,7 +37,7 @@ const serviceAccount = `${service}-run@${project}.iam.gserviceaccount.com`;
 
 const SECRET_KEYS = ["APP_PASSWORD", "GEMINI_API_KEY", "JIRA_API_TOKEN", "SPECIAL_GROUP_JIRA_API_TOKEN"];
 // PORT is reserved by Cloud Run; a local credentials path means nothing in the container.
-const SKIPPED_KEYS = new Set(["PORT", "GOOGLE_APPLICATION_CREDENTIALS", "LARGE_FILES_DIR"]);
+const SKIPPED_KEYS = new Set(["PORT", "GOOGLE_APPLICATION_CREDENTIALS", "LARGE_FILES_DIR", "PRESENTATIONS_DIR"]);
 // Cloud Run caps HTTP/1 request bodies at 32 MiB, so larger uploads could never arrive.
 const CLOUD_RUN_MAX_UPLOAD_MB = 30;
 
