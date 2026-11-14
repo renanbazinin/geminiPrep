@@ -58,11 +58,11 @@ export function resolvePagePlacement(): GeminiToolFilePlacement {
 }
 
 /** LARGE_FILES_ENGINE: "npm" (the default) or "original". Any other value is a startup error. */
-export function resolveLargeFilesEngine(): LargeFilesEngine {
-  const raw = process.env.LARGE_FILES_ENGINE?.trim().toLowerCase();
+export function resolveLargeFilesEngine(env: NodeJS.ProcessEnv = process.env): LargeFilesEngine {
+  const raw = env.LARGE_FILES_ENGINE?.trim().toLowerCase();
   if (!raw) return "npm";
   if ((LARGE_FILES_ENGINES as readonly string[]).includes(raw)) return raw as LargeFilesEngine;
-  throw new Error(`LARGE_FILES_ENGINE must be ${LARGE_FILES_ENGINES.map((name) => `"${name}"`).join(" or ")}, not "${process.env.LARGE_FILES_ENGINE}".`);
+  throw new Error(`LARGE_FILES_ENGINE must be ${LARGE_FILES_ENGINES.map((name) => `"${name}"`).join(" or ")}, not "${env.LARGE_FILES_ENGINE}".`);
 }
 
 /** Limits from the environment. Defaults model an enterprise Gemini connector: 10 MB requests, 1M tokens. */

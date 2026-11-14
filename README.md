@@ -136,7 +136,9 @@ instance's memory, so they are lost when it restarts. Uploads are limited to 30 
 The foot of the sidebar shows what runs: the `version` in `package.json`, the commit (linked on
 GitHub) and the day of the deploy. The image has no git, so the script sets `APP_COMMIT` and
 `APP_DEPLOYED_AT` on the service; a commit that ends in `-dirty` means the deployed files had
-changes that were not committed. A local run shows the commit of its checkout.
+changes that were not committed. A local run shows the commit of its checkout. Under that line is
+the installed version of `llm-large-files`, linked on npm. It is not shown while
+`LARGE_FILES_ENGINE` is `original`, because the package then serves nothing.
 
 ## Local data and credentials
 
