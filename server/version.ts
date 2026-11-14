@@ -78,9 +78,10 @@ function readInstalledVersion(name: string): string | undefined {
 /**
  * The npm packages the footer names. llm-large-files is one only on the npm engine: the original
  * engine runs the copy in packages/large-files, and the installed package then serves nothing.
+ * slotdeck makes the presentations and reads the templates of PPTX Studio.
  */
 function resolveLibraries(env: NodeJS.ProcessEnv): LibraryVersion[] {
-  const names = resolveLargeFilesEngine(env) === "npm" ? ["llm-large-files"] : [];
+  const names = [...(resolveLargeFilesEngine(env) === "npm" ? ["llm-large-files"] : []), "slotdeck"];
   return names.flatMap((name) => {
     const version = readInstalledVersion(name);
     return version ? [{ name, version }] : [];

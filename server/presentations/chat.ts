@@ -168,7 +168,7 @@ export async function proxyPresentationChat(options: {
 
   const chosen = await library.resolve(options.request.presentationTemplate);
   if (!chosen) {
-    fail(409, "There is no presentation template with layouts yet. Make one in Template Studio.");
+    fail(409, "There is no presentation template with layouts yet. Put one in PPTX Studio.");
     return;
   }
   let models: ReturnType<typeof presentationModels>;

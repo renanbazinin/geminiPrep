@@ -1,4 +1,4 @@
-// Template Studio's API, and the download of decks the chat tools made.
+// PPTX Studio's API, and the download of decks the chat tools made.
 //
 // Mount before `express.json()`: a template arrives as the raw bytes of the pptx.
 import express, { type ErrorRequestHandler, type NextFunction, type Request, type Response } from "express";
@@ -6,6 +6,7 @@ import {
   changeManifest,
   draftManifest,
   editManifest,
+  patternVariants,
   renderDeck,
   sampleDeck,
   storeKeys,
@@ -17,10 +18,31 @@ import type { DraftProgress, ManifestChangeOutcome, StudioModelChoice } from "..
 import { resolveGeminiChatModels, resolveVertexChatModels, resolveVertexProject } from "../catalog.js";
 import { resolvePresentationSettings } from "./config.js";
 import { presentationModels } from "./models.js";
+import { SlidePictures, type Picture } from "./previews.js";
 import { TemplateError, displayName, type StoredTemplate, type TemplateLibrary } from "./templates.js";
 
 const PPTX_TYPE = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
 const MAX_CHANGES = 60;
+
+/**
+ * Sends a picture of a slide. It is drawn from a file somebody uploaded, so it is served as a
+ * picture and nothing more: opened by itself in a tab, it may run no script and load nothing.
+ */
+function sendPicture(res: Response, picture: Picture | undefined): void {
+  if (!picture) throw new TemplateError(404, "There is no picture of this slide.");
+  res.setHeader("Content-Security-Policy", "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:");
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  // Kept by the browser and asked about each time: a picture changes when the manifest does.
+  res.setHeader("Cache-Control", "private, no-cache");
+  res.type(picture.mimeType).send(picture.data);
+}
+
+/** The slide number of a picture's file name, such as "3.svg". */
+function slideNumber(file: string): number {
+  const number = Number(/^(\d{1,4})\.svg$/.exec(file)?.[1]);
+  if (!Number.isInteger(number) || number < 1) throw new TemplateError(404, "There is no picture of this slide.");
+  return number;
+}
 
 function headerText(value: string | string[] | undefined): string {
   const raw = Array.isArray(value) ? value[0] : value;
@@ -61,8 +83,14 @@ export function modelChoice(body: unknown): StudioModelChoice {
   return { provider, model: input.model };
 }
 
-export function presentationRoutes(options: { library: TemplateLibrary; fetchImpl?: typeof fetch }) {
+export function presentationRoutes(options: {
+  library: TemplateLibrary;
+  fetchImpl?: typeof fetch;
+  /** Draws the pictures of slides. Defaults to Pagus, when PRESENTATIONS_PREVIEWS allows it. */
+  pictures?: SlidePictures;
+}) {
   const { library } = options;
+  const pictures = options.pictures ?? new SlidePictures();
   const router = express.Router();
   const json = express.json({ limit: "2mb" });
   const run = (handler: (req: Request, res: Response) => Promise<void>) => (req: Request, res: Response, next: NextFunction) => {
@@ -86,7 +114,7 @@ export function presentationRoutes(options: { library: TemplateLibrary; fetchImp
   router.get("/templates", run(async (_req, res) => {
     const settings = resolvePresentationSettings();
     const templates = (await library.list()).map((stored) => library.summary(stored));
-    res.json({ templates, defaultTemplate: settings.defaultTemplate, photos: settings.photos });
+    res.json({ templates, defaultTemplate: settings.defaultTemplate, photos: settings.photos, pictures: await pictures.available() });
   }));
 
   router.post("/templates", express.raw({ type: () => true, limit: library.maxTemplateBytes }), run(async (req, res) => {
@@ -199,8 +227,51 @@ export function presentationRoutes(options: { library: TemplateLibrary; fetchImp
     res.json(library.detail(await library.saveMeta(stored.id, { fields })));
   }));
 
+  /**
+   * The whole manifest, as written by hand or brought from a file. It must be a manifest the
+   * library can read; what does not match the pptx comes back in the template's checks.
+   */
+  router.put("/templates/:id/manifest", json, run(async (req, res) => {
+    const stored = changeable(await found(param(req, "id")));
+    res.json(library.detail(await library.importManifest(stored.id, req.body)));
+  }));
+
+  /** Another pptx in the template's place, with the manifest kept. */
+  router.put("/templates/:id/pptx", express.raw({ type: () => true, limit: library.maxTemplateBytes }), run(async (req, res) => {
+    const stored = changeable(await found(param(req, "id")));
+    const body = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+    const sourceName = headerText(req.headers["x-file-name"]).trim();
+    const replaced = await library.replacePptx(stored.id, new Uint8Array(body.buffer, body.byteOffset, body.byteLength), sourceName || undefined);
+    res.json(library.detail(replaced));
+  }));
+
   router.get("/templates/:id/layouts", run(async (req, res) => {
     res.json(library.layouts(await found(param(req, "id"))));
+  }));
+
+  /** A picture of one of the template's own slides, as its designer left it. */
+  router.get("/templates/:id/slides/:file", run(async (req, res) => {
+    const stored = await found(param(req, "id"));
+    sendPicture(res, await pictures.templateSlide(library, stored, slideNumber(param(req, "file"))));
+  }));
+
+  /** A picture of a layout as a deck will show it, with the template's filler words in its slots. */
+  router.get("/templates/:id/patterns/:file", run(async (req, res) => {
+    const stored = await found(param(req, "id"));
+    const pattern = /^([a-z0-9][a-z0-9-]*)\.svg$/.exec(param(req, "file"))?.[1];
+    if (!pattern || !stored.template.manifest.patterns.some((candidate) => candidate.id === pattern)) throw new TemplateError(404, "There is no such layout.");
+    sendPicture(res, await pictures.layout(stored, pattern));
+  }));
+
+  /**
+   * The variants the code can derive from a layout by itself (its mirror image, a text-only
+   * version, a version without an optional text), each with what it would do or why it cannot.
+   */
+  router.get("/templates/:id/patterns/:pattern/variants", run(async (req, res) => {
+    const stored = await found(param(req, "id"));
+    const pattern = param(req, "pattern");
+    if (!stored.template.manifest.patterns.some((candidate) => candidate.id === pattern)) throw new TemplateError(404, "There is no such layout.");
+    res.json({ variants: patternVariants(stored.template, pattern) });
   }));
 
   router.get("/templates/:id/manifest.json", run(async (req, res) => {
@@ -245,6 +316,16 @@ export function presentationRoutes(options: { library: TemplateLibrary; fetchImp
     } catch { /* The file is still good without its title. */ }
     attach(res, downloadName(title, "pptx"));
     res.type(PPTX_TYPE).send(Buffer.from(pptx));
+  }));
+
+  /** A picture of one slide of such a deck, drawn from its file when first asked for. */
+  router.get("/files/:templateId/:deckId/slides/:file", run(async (req, res) => {
+    const deckId = param(req, "deckId");
+    if (!/^deck_[A-Za-z0-9]{6,40}$/.test(deckId)) throw new TemplateError(404, "This presentation is not on the server.");
+    const templateId = param(req, "templateId");
+    const pptx = await library.store(templateId).get(storeKeys.pptx(deckId));
+    if (!pptx) throw new TemplateError(404, "This presentation is no longer on the server.");
+    sendPicture(res, await pictures.deckSlide(`${templateId}/${deckId}`, pptx, slideNumber(param(req, "file"))));
   }));
 
   const errors: ErrorRequestHandler = (error, _req, res, next) => {

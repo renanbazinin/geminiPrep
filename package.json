@@ -23,6 +23,8 @@
   },
   "dependencies": {
     "@cantoo/pdf-lib": "^2.11.1",
+    "@pagus-kit/core": "0.1.1",
+    "@pagus-kit/renderer": "0.1.1",
     "cors": "^2.8.5",
     "dotenv": "^16.6.1",
     "express": "^4.21.2",

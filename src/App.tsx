@@ -10,7 +10,8 @@ import { SettingsPage } from "./pages/SettingsPage";
 import { TestsPage } from "./pages/TestsPage";
 import { JiraPage } from "./pages/JiraPage";
 import { SpecialGroupPage } from "./special-group/SpecialGroupPage";
-import { TemplateStudioPage } from "./template-studio/TemplateStudioPage";
+import { PptxStudioPage } from "./pptx-studio/PptxStudioPage";
+import { STUDIO_PATH } from "./pptx-studio/paths";
 
 export function App() {
   return (
@@ -24,8 +25,8 @@ export function App() {
                 <Route path="settings" element={<SettingsPage />} />
                 <Route path="jira" element={<JiraPage />} />
                 <Route path="special-group" element={<SpecialGroupPage />} />
-                <Route path="templates" element={<TemplateStudioPage />} />
-                <Route path="templates/:id" element={<TemplateStudioPage />} />
+                <Route path={STUDIO_PATH.slice(1)} element={<PptxStudioPage />} />
+                <Route path={`${STUDIO_PATH.slice(1)}/:id`} element={<PptxStudioPage />} />
                 <Route path="tests" element={<TestsPage />} />
                 <Route path="tests/regions" element={<RegionsPage />} />
                 <Route path="tests/cache" element={<CachePage />} />

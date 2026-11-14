@@ -6,6 +6,7 @@ import type {
   PresentationTemplateSummary,
   StudioModelChoice,
   TemplateLayouts,
+  VariantOption,
 } from "../../shared/presentations";
 
 const API = "/api/presentations";
@@ -30,6 +31,8 @@ export type TemplateList = {
   defaultTemplate: string;
   /** Whether decks get generated photos. */
   photos: boolean;
+  /** Whether the server draws pictures of slides. Without them, layouts are drawn as boxes. */
+  pictures?: boolean;
 };
 
 export async function fetchTemplates(signal?: AbortSignal): Promise<TemplateList> {
@@ -129,8 +132,57 @@ export async function saveTemplateFields(id: string, fields: Record<string, stri
   }));
 }
 
+/** Saves a whole manifest: one edited as JSON, or read from a file. */
+export async function saveTemplateManifest(id: string, manifest: unknown): Promise<PresentationTemplateDetail> {
+  const saved = await json<PresentationTemplateDetail>(await fetch(`${API}/templates/${encodeURIComponent(id)}/manifest`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(manifest),
+  }));
+  layoutCache.delete(id);
+  return saved;
+}
+
+/** Puts another pptx in a template's place; its manifest is kept. */
+export async function replaceTemplatePptx(id: string, file: File): Promise<PresentationTemplateDetail> {
+  const saved = await json<PresentationTemplateDetail>(await fetch(`${API}/templates/${encodeURIComponent(id)}/pptx`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/octet-stream", "X-File-Name": encodeURIComponent(file.name) },
+    body: file,
+  }));
+  layoutCache.delete(id);
+  return saved;
+}
+
+/** The variants the code can derive from a layout, each with what it would do or why it cannot. */
+export async function fetchPatternVariants(id: string, pattern: string, signal?: AbortSignal): Promise<VariantOption[]> {
+  const result = await json<{ variants: VariantOption[] }>(await fetch(
+    `${API}/templates/${encodeURIComponent(id)}/patterns/${encodeURIComponent(pattern)}/variants`,
+    { signal },
+  ));
+  return result.variants;
+}
+
 export function templateFileUrl(id: string, file: "manifest.json" | "template.pptx" | "sample.pptx", query = ""): string {
   return `${API}/templates/${encodeURIComponent(id)}/${file}${query}`;
+}
+
+/**
+ * Where the server's picture of a template slide is. `version` is anything that changes with the
+ * template (its last change), so a browser shows the new picture after one.
+ */
+export function templateSlideUrl(id: string, slide: number, version = ""): string {
+  return `${API}/templates/${encodeURIComponent(id)}/slides/${slide}.svg${version ? `?v=${encodeURIComponent(version)}` : ""}`;
+}
+
+/** Where the picture of a layout is: the layout with the template's filler words in its slots. */
+export function templateLayoutUrl(id: string, pattern: string, version = ""): string {
+  return `${API}/templates/${encodeURIComponent(id)}/patterns/${encodeURIComponent(pattern)}.svg${version ? `?v=${encodeURIComponent(version)}` : ""}`;
+}
+
+/** Where the picture of a slide of a created deck is, from the address of its file. */
+export function deckSlideUrl(file: string, slide: number): string {
+  return `${file.replace(/\.pptx$/, "")}/slides/${slide}.svg`;
 }
 
 const layoutCache = new Map<string, Promise<TemplateLayouts>>();

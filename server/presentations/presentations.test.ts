@@ -11,10 +11,19 @@ import { contentWithPresentationNotes, PRESENTATION_NOTE_PREFIX } from "../../sh
 import { validateChatRequest } from "../chat/validation.js";
 import { resolveVertexChatModels, resolveProbeRegions } from "../catalog.js";
 import { nearestAspectRatio } from "./models.js";
+import { SlidePictures } from "./previews.js";
 import { downloadName } from "./routes.js";
 import { TemplateLibrary, deckFieldValues } from "./templates.js";
 
 const DEMO_PPTX = path.resolve(process.cwd(), "presentation-templates", "demo", "template.pptx");
+const DEMO_MANIFEST = path.resolve(process.cwd(), "presentation-templates", "demo", "manifest.json");
+
+/** Reads a response body as bytes. */
+function binary(res, done) {
+  const chunks = [];
+  res.on("data", (chunk) => chunks.push(chunk));
+  res.on("end", () => done(null, Buffer.concat(chunks)));
+}
 const MODEL = resolveGeminiChatModels()[0].id;
 
 let directory;
@@ -137,7 +146,7 @@ describe("presentation templates", () => {
   });
 });
 
-describe("Template Studio API", () => {
+describe("PPTX Studio API", () => {
   it("lists, uploads, changes, samples and deletes a template", async () => {
     const app = createApp({ presentations: library });
     const listed = await request(app).get("/api/presentations/templates");
@@ -242,6 +251,129 @@ describe("Template Studio API", () => {
     expect(subtitle.empty).toBeUndefined();
     expect(model.calls.interactions[0].input).toContain("Make the cover subtitle required.");
   });
+
+  it("takes a whole manifest, as with a template that already has one, and says what is wrong with a bad one", async () => {
+    const app = createApp({ presentations: library });
+    const manifest = JSON.parse(await readFile(DEMO_MANIFEST, "utf8"));
+    await request(app).post("/api/presentations/templates").set("Content-Type", "application/octet-stream").set("X-Template-Name", "Brought in").send(await readFile(DEMO_PPTX));
+
+    const saved = await request(app).put("/api/presentations/templates/brought-in/manifest").send({ ...manifest, name: "Brought in" });
+    expect(saved.status).toBe(200);
+    expect(saved.body).toMatchObject({ id: "brought-in", name: "Brought in", patterns: 18, errors: 0 });
+
+    // A manifest that is one, and does not match the pptx: kept, with the mismatch among the checks.
+    const broken = structuredClone(manifest);
+    broken.patterns[0].slots[0].shapeId = "999";
+    const mismatched = await request(app).put("/api/presentations/templates/brought-in/manifest").send(broken);
+    expect(mismatched.status).toBe(200);
+    expect(mismatched.body.errors).toBe(1);
+    expect(mismatched.body.issues.find((issue) => issue.severity === "error").message).toContain("shape #999");
+
+    for (const [bad, message] of [
+      [[], "A manifest is a JSON object."],
+      [{ ...manifest, version: 2 }, '"version": 1'],
+      [{ ...manifest, direction: "up" }, '"direction" is "ltr" or "rtl".'],
+      [{ ...manifest, patterns: [{ ...manifest.patterns[0], id: "Cover Slide" }] }, "lowercase letters, digits and dashes"],
+      [{ ...manifest, patterns: [manifest.patterns[0], manifest.patterns[0]] }, 'Two patterns are called "cover".'],
+      [{ ...manifest, patterns: [{ ...manifest.patterns[0], slots: [{ name: "title", kind: "text", shapeId: 5 }] }] }, 'such as "5"'],
+    ]) {
+      const refused = await request(app).put("/api/presentations/templates/brought-in/manifest").send(bad);
+      expect(refused.status).toBe(422);
+      expect(refused.body.error).toContain(message);
+    }
+    // Nothing a refused manifest said was kept.
+    expect((await request(app).get("/api/presentations/templates/brought-in")).body.manifest.patterns[0].slots[0].shapeId).toBe("999");
+    expect((await request(app).put("/api/presentations/templates/demo/manifest").send(manifest)).status).toBe(403);
+  });
+
+  it("puts another pptx in a template's place and keeps the manifest", async () => {
+    const app = createApp({ presentations: library });
+    const copy = await request(app).post("/api/presentations/templates/demo/duplicate").send({ name: "Second edition" });
+    const replaced = await request(app).put(`/api/presentations/templates/${copy.body.id}/pptx`)
+      .set("Content-Type", "application/octet-stream").set("X-File-Name", "edition-2.pptx").send(await readFile(DEMO_PPTX));
+    expect(replaced.status).toBe(200);
+    expect(replaced.body).toMatchObject({ patterns: 18, errors: 0, sourceName: "edition-2.pptx" });
+    const refused = await request(app).put(`/api/presentations/templates/${copy.body.id}/pptx`).set("Content-Type", "application/octet-stream").send(Buffer.from("not a deck"));
+    expect(refused.status).toBe(422);
+    expect((await request(app).put("/api/presentations/templates/demo/pptx").set("Content-Type", "application/octet-stream").send(await readFile(DEMO_PPTX))).status).toBe(403);
+  });
+
+  it("derives variants, widens rows and scales body text through the checked operations", async () => {
+    const app = createApp({ presentations: library });
+    // The shipped manifest already has the mirror image of its photo layouts.
+    const offered = await request(app).get("/api/presentations/templates/demo/patterns/list-with-photo/variants");
+    expect(offered.status).toBe(200);
+    expect(offered.body.variants.map((option) => option.variant)).toEqual(expect.arrayContaining(["mirror", "text-only"]));
+    const cover = await request(app).get("/api/presentations/templates/demo/patterns/cover/variants");
+    expect(cover.body.variants.find((option) => option.variant === "mirror")).toMatchObject({ available: false, note: expect.stringMatching(/\S/) });
+    expect((await request(app).get("/api/presentations/templates/demo/patterns/no-such/variants")).status).toBe(404);
+
+    const copy = await request(app).post("/api/presentations/templates/demo/duplicate").send({ name: "Variants" });
+    const changed = await request(app).post(`/api/presentations/templates/${copy.body.id}/changes`).send({ changes: [
+      { op: "derivePattern", pattern: "list-with-photo", variant: "text-only" },
+      { op: "derivePattern", pattern: "cover", variant: "mirror" },
+      { op: "setRepeat", pattern: "two-columns", widen: 1.5 },
+      { op: "setManifest", textScale: 1.3 },
+    ] });
+    expect(changed.status).toBe(200);
+    expect(changed.body.rejected.map((entry) => entry.index)).toEqual([1]);
+    const { manifest } = changed.body.template;
+    expect(manifest.patterns.map((pattern) => pattern.id)).toContain("list-with-photo-text-only");
+    expect(manifest.patterns.find((pattern) => pattern.id === "two-columns").repeat.widen).toBe(1.5);
+    expect(manifest.textScale).toBe(1.3);
+  });
+
+  it("draws pictures of a template's slides and layouts, to be shown as images only", async () => {
+    const app = createApp({ presentations: library });
+    expect((await request(app).get("/api/presentations/templates")).body.pictures).toBe(true);
+    for (const url of ["/api/presentations/templates/demo/slides/2.svg", "/api/presentations/templates/demo/patterns/text-only.svg"]) {
+      const picture = await request(app).get(url).buffer(true).parse(binary);
+      expect(picture.status).toBe(200);
+      expect(picture.headers["content-type"]).toContain("image/svg+xml");
+      // A picture is made from an uploaded file: opened by itself, it may run and load nothing.
+      expect(picture.headers["content-security-policy"]).toContain("sandbox");
+      expect(picture.headers["x-content-type-options"]).toBe("nosniff");
+      const svg = picture.body.toString("utf8");
+      expect(svg.startsWith("<svg")).toBe(true);
+      expect(svg).not.toMatch(/<script/i);
+    }
+    // The text-only layout is drawn as itself: without the photo of the slide it was made from.
+    const slide = (await request(app).get("/api/presentations/templates/demo/slides/2.svg").buffer(true).parse(binary)).body.toString("utf8");
+    const layout = (await request(app).get("/api/presentations/templates/demo/patterns/text-only.svg").buffer(true).parse(binary)).body.toString("utf8");
+    const images = (svg) => svg.match(/<image /g)?.length ?? 0;
+    expect(images(slide)).toBe(2); // the logo and the photo
+    expect(images(layout)).toBe(1); // the logo
+    expect(layout).toContain("Slide title for a text and photo layout");
+    for (const url of ["/api/presentations/templates/demo/slides/99.svg", "/api/presentations/templates/demo/slides/x.svg", "/api/presentations/templates/demo/patterns/none.svg"]) {
+      expect((await request(app).get(url)).status).toBe(404);
+    }
+  });
+
+  it("answers that there is no picture when the server draws none, so the browser draws boxes", async () => {
+    const app = createApp({ presentations: library, slidePictures: new SlidePictures(async () => undefined) });
+    expect((await request(app).get("/api/presentations/templates")).body.pictures).toBe(false);
+    expect((await request(app).get("/api/presentations/templates/demo/slides/1.svg")).status).toBe(404);
+    // The boxes come from the layouts, which need no renderer.
+    expect((await request(app).get("/api/presentations/templates/demo/layouts")).body.patterns.cover.shapes.length).toBeGreaterThan(0);
+  });
+
+  it("draws a set of pictures once, and again only after a failure", async () => {
+    let drawn = 0;
+    let fail = true;
+    const pictures = new SlidePictures(async () => ({
+      async renderSlides() {
+        drawn++;
+        if (fail) throw new Error("renderer down");
+        return [{ slide: 1, mimeType: "image/svg+xml", data: new TextEncoder().encode("<svg/>") }];
+      },
+    }));
+    const demo = await library.get("demo");
+    await expect(pictures.templateSlide(library, demo, 1)).rejects.toThrow("renderer down");
+    fail = false;
+    expect((await pictures.templateSlide(library, demo, 1)).data.toString()).toBe("<svg/>");
+    expect(await pictures.templateSlide(library, demo, 2)).toBeUndefined();
+    expect(drawn).toBe(2);
+  });
 });
 
 describe("presentation tools in the chat", () => {
@@ -309,6 +441,13 @@ describe("presentation tools in the chat", () => {
     expect(file.body.length).toBe(deck.bytes);
     expect(file.body.subarray(0, 2).toString()).toBe("PK");
     expect(file.headers["content-disposition"]).toContain('filename="City bikes.pptx"');
+    // The slides of the deck as pictures, drawn from the file for the card in the chat.
+    const slide = await request(app).get(`${deck.file.replace(/\.pptx$/, "")}/slides/1.svg`).buffer(true).parse(binary);
+    expect(slide.status).toBe(200);
+    expect(slide.headers["content-type"]).toContain("image/svg+xml");
+    expect(slide.body.toString("utf8")).toContain("City bikes");
+    expect((await request(app).get(`${deck.file.replace(/\.pptx$/, "")}/slides/3.svg`)).status).toBe(404);
+    expect((await request(app).get("/api/presentations/files/demo/deck_0000000000/slides/1.svg")).status).toBe(404);
     expect((await request(app).get("/api/presentations/files/demo/deck_0000000000.pptx")).status).toBe(404);
     expect((await request(app).get("/api/presentations/files/demo/..%2Fdeck.pptx")).status).toBe(404);
   });
@@ -388,7 +527,7 @@ describe("presentation tools in the chat", () => {
     const empty = new TemplateLibrary({ directory, builtInDirectory: path.join(directory, "none") });
     const response = await request(createApp({ presentations: empty, fetchImpl: gemini().fetchImpl })).post("/api/chat/stream").send(chatBody());
     expect(response.status).toBe(409);
-    expect(response.body.error).toContain("Template Studio");
+    expect(response.body.error).toContain("PPTX Studio");
   });
 });
 

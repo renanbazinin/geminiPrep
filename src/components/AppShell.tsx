@@ -77,7 +77,7 @@ export function AppShell() {
   }
 
   const pageTitle = location.pathname === "/jira" ? "DeskFlow · Jira" : location.pathname === "/special-group" ? "Special Group"
-    : location.pathname.startsWith("/templates") ? "Template Studio" : location.pathname === "/settings"
+    : location.pathname.startsWith("/pptx-studio") ? "PPTX Studio" : location.pathname === "/settings"
     ? "Settings"
     : location.pathname === "/tests/cache"
       ? "Cache test"
@@ -157,8 +157,8 @@ export function AppShell() {
           <NavLink to="/special-group" className={({ isActive }) => `sidebar-link${isActive ? " sidebar-link-active" : ""}`} onClick={() => setDrawerOpen(false)}>
             <Users size={18} /><span>Special Group</span>
           </NavLink>
-          <NavLink to="/templates" className={({ isActive }) => `sidebar-link${isActive ? " sidebar-link-active" : ""}`} onClick={() => setDrawerOpen(false)}>
-            <Presentation size={18} /><span>Template Studio</span>
+          <NavLink to="/pptx-studio" className={({ isActive }) => `sidebar-link${isActive ? " sidebar-link-active" : ""}`} onClick={() => setDrawerOpen(false)}>
+            <Presentation size={18} /><span>PPTX Studio</span>
           </NavLink>
           <NavLink to="/tests" className={({ isActive }) => `sidebar-link${isActive ? " sidebar-link-active" : ""}`} onClick={() => setDrawerOpen(false)}>
             <FlaskConical size={18} />

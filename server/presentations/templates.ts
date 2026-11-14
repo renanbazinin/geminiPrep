@@ -1,5 +1,5 @@
 // Where presentation templates live: the ones shipped with the app (presentation-templates/)
-// and the ones made in Template Studio (PRESENTATIONS_DIR/templates). A template is a folder
+// and the ones put in PPTX Studio (PRESENTATIONS_DIR/templates). A template is a folder
 // with the pptx, the manifest that says which of its shapes are slots, and a few notes.
 import { cp, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -48,6 +48,8 @@ export type StoredTemplate = {
   template: Template;
   /** Size of the pptx. */
   bytes: number;
+  /** Changes when the pptx file does. */
+  stamp: string;
   meta: TemplateMeta;
 };
 
@@ -133,7 +135,7 @@ export class TemplateLibrary {
     const meta = (await readJson<TemplateMeta>(path.join(folder.directory, META_FILE))) ?? {};
     const manifest = (await readJson<TemplateManifest>(path.join(folder.directory, MANIFEST_FILE))) ?? emptyManifest(meta.name ?? folder.id);
     if (!Array.isArray(manifest.patterns)) manifest.patterns = [];
-    return { ...folder, template: { pkg: cached.pkg, manifest }, bytes: cached.bytes, meta };
+    return { ...folder, template: { pkg: cached.pkg, manifest }, bytes: cached.bytes, stamp: cached.stamp, meta };
   }
 
   async list(): Promise<StoredTemplate[]> {
@@ -181,17 +183,7 @@ export class TemplateLibrary {
 
   /** Keeps an uploaded pptx as a new template with no layouts yet; drafting fills them in. */
   async create(input: { name: string; bytes: Uint8Array; sourceName?: string }): Promise<StoredTemplate> {
-    if (input.bytes.byteLength === 0) throw new TemplateError(400, "The upload is empty.");
-    if (input.bytes.byteLength > this.maxTemplateBytes) {
-      throw new TemplateError(413, `The file is larger than the ${Math.round(this.maxTemplateBytes / 1024 / 1024)} MB template limit.`);
-    }
-    let slides: number;
-    try {
-      slides = inspectTemplate(PptxPackage.load(input.bytes)).slides.length;
-    } catch {
-      throw new TemplateError(422, "This file is not a PowerPoint presentation (.pptx).");
-    }
-    if (slides === 0) throw new TemplateError(422, "This presentation has no slides.");
+    this.checkPptx(input.bytes);
 
     const name = input.name.replace(/\s+/g, " ").trim().slice(0, 80) || "Template";
     const id = await this.freeId(name);
@@ -235,6 +227,54 @@ export class TemplateLibrary {
     const meta: TemplateMeta = { ...stored.meta, ...patch, name: manifest.name || stored.meta.name, updatedAt: new Date().toISOString() };
     await writeFile(path.join(stored.directory, META_FILE), JSON.stringify(meta, null, 2));
     return (await this.get(id)) as StoredTemplate;
+  }
+
+  /**
+   * Keeps a manifest that was written or changed outside the studio's own controls: pasted,
+   * edited as JSON, or imported from a file. It has to be a manifest the library can work with;
+   * whether it matches the pptx is for the checks to say, so a half-finished one can be saved.
+   */
+  async importManifest(id: string, input: unknown): Promise<StoredTemplate> {
+    const stored = await this.editable(id);
+    const manifest = parseManifest(input);
+    try {
+      // Everything the studio and the chat do with a manifest, tried once before it is kept.
+      const candidate = { ...stored, template: { ...stored.template, manifest } };
+      checkManifest(candidate.template, this.inspect(stored));
+      studioView(candidate.template);
+      deckFields(candidate);
+    } catch (error) {
+      throw new TemplateError(422, `This manifest cannot be used: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    // A manifest from elsewhere says nothing about slides a draft here once left out.
+    return this.saveManifest(id, manifest, { skipped: [] });
+  }
+
+  /**
+   * Puts another pptx in a template's place and keeps its manifest: for a deck that was edited
+   * in PowerPoint. Shape ids can change there, and the checks then say which slots lost theirs.
+   */
+  async replacePptx(id: string, bytes: Uint8Array, sourceName?: string): Promise<StoredTemplate> {
+    const stored = await this.editable(id);
+    this.checkPptx(bytes);
+    await writeFile(path.join(stored.directory, PPTX_FILE), bytes);
+    this.packages.delete(id);
+    return this.saveMeta(id, sourceName ? { sourceName } : {});
+  }
+
+  /** Refuses bytes that are not a presentation with slides. */
+  private checkPptx(bytes: Uint8Array): void {
+    if (bytes.byteLength === 0) throw new TemplateError(400, "The upload is empty.");
+    if (bytes.byteLength > this.maxTemplateBytes) {
+      throw new TemplateError(413, `The file is larger than the ${Math.round(this.maxTemplateBytes / 1024 / 1024)} MB template limit.`);
+    }
+    let slides: number;
+    try {
+      slides = inspectTemplate(PptxPackage.load(bytes)).slides.length;
+    } catch {
+      throw new TemplateError(422, "This file is not a PowerPoint presentation (.pptx).");
+    }
+    if (slides === 0) throw new TemplateError(422, "This presentation has no slides.");
   }
 
   async saveMeta(id: string, patch: Partial<TemplateMeta>): Promise<StoredTemplate> {
@@ -361,6 +401,51 @@ export class TemplateLibrary {
   }
 }
 
+const SLOT_KINDS = new Set(["text", "image", "table", "chart"]);
+
+/**
+ * Reads a manifest that came in as JSON. It checks the shape every use of a manifest relies on,
+ * and names the first thing that is wrong in words a person editing the JSON can act on.
+ */
+export function parseManifest(input: unknown): TemplateManifest {
+  const fail = (message: string): never => {
+    throw new TemplateError(422, message);
+  };
+  const record = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === "object" && !Array.isArray(value);
+  if (!record(input)) return fail("A manifest is a JSON object.");
+  if (input.version !== 1) fail('A manifest has "version": 1.');
+  if (typeof input.name !== "string" || !input.name.trim()) fail('A manifest has a "name".');
+  if (input.direction !== "ltr" && input.direction !== "rtl") fail('"direction" is "ltr" or "rtl".');
+  if (!Array.isArray(input.patterns)) return fail('"patterns" is a list.');
+  const ids = new Set<string>();
+  input.patterns.forEach((pattern: unknown, index: number) => {
+    const where = `patterns[${index}]`;
+    if (!record(pattern)) return fail(`${where} is not an object.`);
+    if (typeof pattern.id !== "string" || !/^[a-z0-9][a-z0-9-]*$/.test(pattern.id)) fail(`${where}.id is made of lowercase letters, digits and dashes.`);
+    const id = pattern.id as string;
+    if (ids.has(id)) fail(`Two patterns are called "${id}".`);
+    ids.add(id);
+    if (!Number.isInteger(pattern.sourceSlide) || (pattern.sourceSlide as number) < 1) fail(`"${id}": sourceSlide is a slide number, from 1.`);
+    if (typeof pattern.description !== "string") fail(`"${id}" has no description.`);
+    if (!Array.isArray(pattern.slots)) return fail(`"${id}": slots is a list.`);
+    pattern.slots.forEach((slot: unknown, position: number) => {
+      if (!record(slot)) return fail(`"${id}": slots[${position}] is not an object.`);
+      if (typeof slot.name !== "string" || !slot.name) fail(`"${id}": slots[${position}] has no name.`);
+      if (typeof slot.kind !== "string" || !SLOT_KINDS.has(slot.kind)) fail(`"${id}": the kind of "${String(slot.name)}" is text, image, table or chart.`);
+      if (typeof slot.shapeId !== "string" || !slot.shapeId) fail(`"${id}": the shapeId of "${String(slot.name)}" is the shape's id as text, such as "5".`);
+    });
+    if (pattern.repeat !== undefined) {
+      const repeat = pattern.repeat;
+      if (!record(repeat) || !Array.isArray(repeat.slots) || !Array.isArray(repeat.shapes)
+        || repeat.slots.some((name: unknown) => typeof name !== "string")
+        || repeat.shapes.some((item: unknown) => !Array.isArray(item) || item.some((shape: unknown) => typeof shape !== "string"))) {
+        fail(`"${id}": repeat needs "slots" (names with {n}) and "shapes" (a list of shape ids for each item).`);
+      }
+    }
+  });
+  return input as unknown as TemplateManifest;
+}
+
 export function displayName(stored: StoredTemplate): string {
   return stored.meta.name?.trim() || stored.template.manifest.name?.trim() || stored.id;
 }
@@ -379,7 +464,7 @@ export function deckFields(stored: StoredTemplate, view: StudioView = studioView
 }
 
 /**
- * Values for every deck field, so no layout is withheld for lack of one: what Template Studio
+ * Values for every deck field, so no layout is withheld for lack of one: what PPTX Studio
  * was given, or else the text the template itself shows there.
  */
 export function deckFieldValues(stored: StoredTemplate): Record<string, string> {

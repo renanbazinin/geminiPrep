@@ -21,12 +21,12 @@ export type PresentationImageSize = (typeof IMAGE_SIZES)[number];
 const THINKING_LEVELS = ["minimal", "low", "medium", "high"] as const;
 export type PresentationThinkingLevel = (typeof THINKING_LEVELS)[number];
 
-/** Settings of the presentation tools and Template Studio, from the environment. */
+/** Settings of the presentation tools and PPTX Studio, from the environment. */
 export function resolvePresentationSettings() {
   const size = process.env.PRESENTATIONS_IMAGE_SIZE?.trim();
   const thinking = process.env.PRESENTATIONS_THINKING_LEVEL?.trim().toLowerCase();
   return {
-    /** Templates made in Template Studio, and the plans, decks, pictures and files of the chat tools. */
+    /** Templates put in PPTX Studio, and the plans, decks, pictures and files of the chat tools. */
     directory: process.env.PRESENTATIONS_DIR?.trim() || path.resolve(process.cwd(), ".data", "presentations"),
     /** Templates shipped with the app, and the icon set decks pick from. */
     builtInDirectory: path.resolve(process.cwd(), "presentation-templates"),
@@ -51,6 +51,12 @@ export function resolvePresentationSettings() {
      * few seconds, and leaves the model's own default for the rest. Gemini 4 refuses "minimal".
      */
     thinkingLevel: (THINKING_LEVELS as readonly string[]).includes(thinking ?? "") ? thinking as PresentationThinkingLevel : undefined,
+    /**
+     * Pictures of slides, drawn on the server with the Pagus library and shown by the browser:
+     * a template's slides and layouts in PPTX Studio, and the slides of a created deck in the
+     * chat. No model sees them. Off, the app draws layouts as boxes.
+     */
+    previews: enabled("PRESENTATIONS_PREVIEWS", true),
     /** The most rounds of tool calls in one chat answer. */
     maxToolTurns: Math.max(2, Math.round(positive("PRESENTATIONS_MAX_TOOL_TURNS", 6))),
     maxTemplateBytes: Math.round(positive("PRESENTATIONS_MAX_TEMPLATE_MB", 60) * MB),

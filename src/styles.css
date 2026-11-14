@@ -606,6 +606,10 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 
 /* Presentations: a layout drawn as boxes, and the plan and deck cards in the chat. */
 .slide-wireframe { display: block; width: 100%; height: auto; border-radius: 5px; }
+/* The server's picture of a slide. The light ground shows while it loads. */
+.slide-picture { display: block; width: 100%; height: auto; aspect-ratio: 16 / 9; object-fit: contain; border: 1px solid #cfd3dc; border-radius: 5px; background: #f3f4f8; }
+.deck-strip a { display: block; border-radius: 5px; }
+.deck-strip a:hover .slide-picture { border-color: var(--accent-strong); }
 .wire-slide { fill: #f3f4f8; stroke: #cfd3dc; stroke-width: 3; }
 .wire-design { fill: #dde0e8; }
 .wire-line { stroke: #b9bfcb; stroke-width: 3; }
@@ -637,8 +641,8 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 .deck-thumb-empty { display: block; aspect-ratio: 16 / 9; border: 1px dashed var(--border); border-radius: 5px; }
 .deck-card-actions { display: flex; align-items: center; gap: 12px; margin-top: 15px; padding-top: 14px; border-top: 1px solid var(--border-soft); color: var(--subtle); font-size: 0.75rem; }
 .deck-strip { margin: 14px 0 0; padding: 0 0 4px; list-style: none; display: flex; gap: 9px; overflow-x: auto; scrollbar-width: thin; }
-.deck-strip li { flex: 0 0 128px; display: flex; flex-direction: column; gap: 5px; }
-.deck-strip .deck-thumb { width: 128px; }
+.deck-strip li { flex: 0 0 176px; display: flex; flex-direction: column; gap: 5px; }
+.deck-strip .deck-thumb { width: 176px; }
 .deck-strip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 0.68rem; }
 .deck-strip b { color: var(--text); font-weight: 600; }
 .deck-warnings { margin-top: 12px; padding: 9px 11px; border: 1px solid #5b492b; border-radius: 9px; background: #211c14; color: #e8c88d; font-size: 0.75rem; }

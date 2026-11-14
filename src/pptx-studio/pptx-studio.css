@@ -1,4 +1,4 @@
-/* Template Studio: the list of templates, and the editor of one. */
+/* PPTX Studio: the list of templates, and the editor of one. */
 .studio-page { padding-top: 60px; }
 .studio-editor { width: min(1400px, calc(100% - 56px)); }
 .studio-note { margin: 16px 0 0; color: var(--subtle); font-size: 0.78rem; line-height: 1.55; }
@@ -16,9 +16,9 @@ textarea.studio-input { resize: vertical; line-height: 1.45; }
 .studio-upload-icon { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 11px; background: #25213c; color: var(--accent-strong); }
 .studio-upload h2 { margin: 0 0 5px; font: 600 1rem "Manrope", sans-serif; }
 .studio-upload p { margin: 0; color: var(--muted); font-size: 0.79rem; line-height: 1.55; }
-.studio-upload-form { display: flex; align-items: center; gap: 8px; }
-.studio-upload-form .studio-input { width: 190px; }
-.studio-upload-form .secondary-button { max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+.studio-upload-form { display: grid; grid-template-columns: repeat(2, minmax(0, 190px)); align-items: center; gap: 8px; }
+.studio-upload-form .secondary-button { justify-content: flex-start; overflow: hidden; text-overflow: ellipsis; }
+.studio-upload-form .secondary-button svg { flex: none; }
 
 /* Template cards */
 .studio-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
@@ -59,8 +59,30 @@ textarea.studio-input { resize: vertical; line-height: 1.45; }
 .studio-log-ok svg { color: var(--success); }
 .studio-log-no { border-color: #5b492b; color: #e8c88d; }
 
+/* The two parts of a template: its layouts, and its files */
+.studio-maintabs { display: flex; gap: 4px; margin-top: 22px; border-bottom: 1px solid var(--border-soft); }
+.studio-maintabs button { display: inline-flex; align-items: center; gap: 7px; margin-bottom: -1px; padding: 10px 14px; border: 1px solid transparent; border-bottom: 0; border-radius: 9px 9px 0 0; background: transparent; color: var(--muted); font-size: 0.82rem; font-weight: 600; cursor: pointer; }
+.studio-maintabs button:hover { color: var(--text); }
+.studio-maintabs button.is-selected { border-color: var(--border-soft); background: var(--surface); color: var(--text); box-shadow: 0 1px 0 var(--surface); }
+.studio-files { display: grid; grid-template-columns: minmax(0, 2fr) minmax(260px, 1fr); align-items: start; gap: 16px; margin-top: 20px; }
+.studio-files h3 { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
+.studio-json { min-height: 540px; font: 0.74rem/1.5 "Cascadia Code", Consolas, monospace; white-space: pre; overflow: auto; tab-size: 2; }
+.studio-json[readonly] { color: var(--muted); }
+.studio-json-status { margin: 0; color: var(--subtle); font-size: 0.74rem; }
+.studio-json-status.is-bad { color: var(--danger); }
+.studio-file-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
+.studio-file-actions .primary-button { padding: 9px 13px; }
+
 /* Workspace: slides, the slide, the inspector */
 .studio-workspace { display: grid; grid-template-columns: 172px minmax(0, 1fr) 330px; align-items: start; gap: 18px; margin-top: 20px; }
+.studio-workspace[hidden] { display: none; }
+.studio-viewbar { display: inline-flex; margin-bottom: 9px; padding: 3px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); }
+.studio-viewbar button { padding: 5px 11px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); font-size: 0.74rem; font-weight: 600; cursor: pointer; }
+.studio-viewbar button:hover:not(:disabled) { color: var(--text); }
+.studio-viewbar button.is-selected { background: #24213d; color: var(--accent-strong); }
+.studio-viewbar button:disabled { opacity: 0.4; cursor: not-allowed; }
+.studio-slide-button .slide-picture { border-radius: 4px; }
+.studio-preview .slide-picture { border-radius: 4px; }
 .studio-slides { display: flex; flex-direction: column; gap: 8px; max-height: 76vh; padding-right: 4px; overflow-y: auto; scrollbar-width: thin; }
 .studio-slide-button { display: flex; flex-direction: column; gap: 5px; padding: 6px; border: 1px solid transparent; border-radius: 9px; background: transparent; color: var(--muted); font-size: 0.68rem; text-align: left; cursor: pointer; }
 .studio-slide-button:hover { background: var(--surface-2); }
@@ -85,6 +107,22 @@ textarea.studio-input { resize: vertical; line-height: 1.45; }
 .studio-shape-design { background: rgba(120, 128, 145, 0.16); color: #6a7183; }
 .studio-shape-frame { border: 1px dotted #9aa1b1; background: rgba(120, 128, 145, 0.1); color: #6a7183; }
 .studio-shape-line { background: #b9bfcb; }
+/* Over the server's picture of the slide: the shapes are outlines, and a slot carries its name as a tag. */
+.studio-canvas-picture { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; border-radius: 0; background: #fff; pointer-events: none; }
+.studio-canvas-pictured .studio-shape { padding: 0; overflow: visible; font-weight: 600; }
+.studio-canvas-pictured .studio-shape span { position: absolute; left: -1px; top: -1px; max-width: calc(100% + 2px); padding: 1px 5px; border-radius: 3px 0 3px 0; color: #fff; font-size: 0.6rem; line-height: 1.35; }
+.studio-canvas-pictured .studio-shape span:empty { display: none; }
+.studio-canvas-pictured .studio-shape-text { background: rgba(111, 99, 193, 0.1); }
+.studio-canvas-pictured .studio-shape-text span { background: #6f63c1; }
+.studio-canvas-pictured .studio-shape-image { background: rgba(42, 157, 143, 0.12); }
+.studio-canvas-pictured .studio-shape-image span { background: #2a9d8f; }
+.studio-canvas-pictured .studio-shape-table { background: rgba(201, 150, 47, 0.12); }
+.studio-canvas-pictured .studio-shape-table span { background: #b0801f; }
+.studio-canvas-pictured .studio-shape-chart { background: rgba(217, 105, 58, 0.12); }
+.studio-canvas-pictured .studio-shape-chart span { background: #d9693a; }
+.studio-canvas-pictured .studio-shape-drop span { background: #b04a57; }
+.studio-canvas-pictured .studio-shape-design, .studio-canvas-pictured .studio-shape-frame, .studio-canvas-pictured .studio-shape-line { border-color: transparent; background: transparent; }
+.studio-canvas-pictured .studio-shape-design:hover, .studio-canvas-pictured .studio-shape-frame:hover { border: 1px dotted #6a7183; filter: none; box-shadow: none; }
 .studio-legend { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 9px; color: var(--subtle); font-size: 0.68rem; }
 .studio-key { display: inline-flex; align-items: center; gap: 5px; }
 .studio-key::before { content: ""; width: 11px; height: 11px; border: 1px solid; border-radius: 3px; }
@@ -127,6 +165,11 @@ textarea.studio-input { resize: vertical; line-height: 1.45; }
 .studio-check { display: flex; align-items: flex-start; gap: 9px; font-size: 0.78rem; cursor: pointer; }
 .studio-check input { margin-top: 3px; accent-color: var(--accent-strong); }
 .studio-check small { display: block; margin-top: 2px; color: var(--subtle); font-size: 0.7rem; line-height: 1.4; }
+.studio-variants { display: flex; flex-direction: column; gap: 7px; width: 100%; }
+.studio-refused { color: var(--subtle); font-size: 0.72rem; line-height: 1.45; }
+.studio-refused summary { cursor: pointer; }
+.studio-refused ul { margin: 6px 0 0; padding-inline-start: 18px; }
+.studio-refused li + li { margin-top: 4px; }
 .studio-lower { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); align-items: start; gap: 14px; margin-top: 22px; }
 .studio-ok { display: flex; align-items: center; gap: 7px; margin: 0; color: var(--success); font-size: 0.78rem; }
 .studio-issues { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; width: 100%; }
@@ -143,9 +186,9 @@ textarea.studio-input { resize: vertical; line-height: 1.45; }
 }
 @media (max-width: 760px) {
   .studio-editor { width: min(100% - 28px, 1400px); }
-  .studio-upload, .studio-instruct { grid-template-columns: 1fr; }
-  .studio-upload-form, .studio-draft-call, .studio-editor-head { flex-direction: column; align-items: stretch; }
-  .studio-upload-form .studio-input, .studio-upload-form .secondary-button { width: 100%; max-width: none; }
+  .studio-upload, .studio-instruct, .studio-files { grid-template-columns: 1fr; }
+  .studio-draft-call, .studio-editor-head { flex-direction: column; align-items: stretch; }
+  .studio-upload-form { grid-template-columns: 1fr; }
   .studio-head-actions { justify-content: flex-start; }
   .studio-workspace { grid-template-columns: 1fr; }
   .studio-slides { flex-direction: row; max-height: none; overflow-x: auto; padding: 0 0 6px; }

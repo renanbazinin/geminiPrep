@@ -1,32 +1,47 @@
-import { AlertTriangle, ArrowUpRight, Check, FileUp, LoaderCircle, MessageSquare, Presentation, Trash2 } from "lucide-react";
+import { AlertTriangle, ArrowUpRight, Braces, Check, FileUp, LoaderCircle, MessageSquare, Presentation, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import type { PresentationTemplateSummary, TemplateLayouts } from "../../shared/presentations";
 import { chatModelFor } from "../../shared/gemini-4";
+import { SlidePicture } from "../components/SlidePicture";
 import { SlideWireframe } from "../components/SlideWireframe";
 import { useApp } from "../contexts/AppContext";
-import { deleteTemplate, fetchTemplateLayouts, fetchTemplates, uploadTemplate, type TemplateList } from "../lib/presentations";
+import {
+  deleteTemplate,
+  fetchTemplateLayouts,
+  fetchTemplates,
+  saveTemplateManifest,
+  templateLayoutUrl,
+  uploadTemplate,
+  type TemplateList,
+} from "../lib/presentations";
+import { STUDIO_PATH } from "./paths";
 import { TemplateEditor } from "./TemplateEditor";
-import "./template-studio.css";
+import "./pptx-studio.css";
 
 function megabytes(bytes: number): string {
   return bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-/** The first layouts of a template, drawn small. */
-function TemplatePreview({ id, patterns }: { id: string; patterns: number }) {
+/** The first layouts of a template, small: the server's pictures, or boxes where it draws none. */
+function TemplatePreview({ template }: { template: PresentationTemplateSummary }) {
   const [layouts, setLayouts] = useState<TemplateLayouts | null>(null);
   useEffect(() => {
     let current = true;
-    if (patterns > 0) fetchTemplateLayouts(id).then((loaded) => { if (current) setLayouts(loaded); }, () => undefined);
+    if (template.patterns > 0) fetchTemplateLayouts(template.id).then((loaded) => { if (current) setLayouts(loaded); }, () => undefined);
     return () => { current = false; };
-  }, [id, patterns]);
+  }, [template.id, template.patterns, template.updatedAt]);
   const shown = layouts ? Object.entries(layouts.patterns).slice(0, 3) : [];
-  if (shown.length === 0) return <div className="studio-preview studio-preview-empty">{patterns === 0 ? "No layouts yet" : ""}</div>;
+  if (shown.length === 0) return <div className="studio-preview studio-preview-empty">{template.patterns === 0 ? "No layouts yet" : ""}</div>;
   return (
     <div className="studio-preview">
       {shown.map(([pattern, layout]) => (
-        <SlideWireframe key={pattern} aspectRatio={layouts!.aspectRatio} shapes={layout.shapes} label={`Layout ${pattern}`} />
+        <SlidePicture
+          key={pattern}
+          src={templateLayoutUrl(template.id, pattern, template.updatedAt)}
+          alt={`Layout ${pattern}`}
+          fallback={<SlideWireframe aspectRatio={layouts!.aspectRatio} shapes={layout.shapes} label={`Layout ${pattern}`} />}
+        />
       ))}
     </div>
   );
@@ -41,8 +56,8 @@ function TemplateCard({ template, inChat, onUse, onDelete }: {
   const [armed, setArmed] = useState(false);
   return (
     <article className={`studio-card${inChat ? " studio-card-active" : ""}`}>
-      <Link className="studio-card-open" to={`/templates/${template.id}`} aria-label={`Open ${template.name}`}>
-        <TemplatePreview id={template.id} patterns={template.patterns} />
+      <Link className="studio-card-open" to={`${STUDIO_PATH}/${template.id}`} aria-label={`Open ${template.name}`}>
+        <TemplatePreview template={template} />
         <div className="studio-card-title">
           <h2 dir="auto">{template.name}</h2>
           <ArrowUpRight size={16} />
@@ -63,7 +78,7 @@ function TemplateCard({ template, inChat, onUse, onDelete }: {
             <span className="studio-in-chat"><Check size={14} /> Used in chat</span>
           ) : (
             <button type="button" className="secondary-button" onClick={onUse} disabled={template.patterns === 0}
-              title={template.patterns === 0 ? "Draft its layouts first" : "The chat's presentation tools will use this template"}>
+              title={template.patterns === 0 ? "Give it layouts first" : "The chat's presentation tools will use this template"}>
               <MessageSquare size={14} /> Use in chat
             </button>
           )}
@@ -91,9 +106,11 @@ function TemplateListView() {
   const [list, setList] = useState<TemplateList | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [file, setFile] = useState<File | null>(null);
+  const [manifestFile, setManifestFile] = useState<File | null>(null);
   const [name, setName] = useState("");
   const [uploading, setUploading] = useState(false);
   const fileRef = useRef<HTMLInputElement | null>(null);
+  const manifestRef = useRef<HTMLInputElement | null>(null);
 
   const reload = useCallback(() => {
     fetchTemplates().then(setList, (reason) => setError(reason instanceof Error ? reason.message : String(reason)));
@@ -111,9 +128,26 @@ function TemplateListView() {
     setUploading(true);
     setError(null);
     try {
+      // Read the manifest first: a file that is not JSON should not leave a template behind.
+      let manifest: unknown;
+      if (manifestFile) {
+        try {
+          manifest = JSON.parse(await manifestFile.text());
+        } catch {
+          throw new Error(`${manifestFile.name} is not a JSON file.`);
+        }
+      }
       const created = await uploadTemplate(file, name.trim() || file.name.replace(/\.pptx$/i, ""));
-      // The editor offers the draft as its first step.
-      navigate(`/templates/${created.id}`);
+      if (manifest !== undefined) {
+        try {
+          await saveTemplateManifest(created.id, manifest);
+        } catch (reason) {
+          reload();
+          throw new Error(`The .pptx was put in the studio as "${created.name}", but its manifest was not accepted: ${reason instanceof Error ? reason.message : String(reason)}`);
+        }
+      }
+      // Without a manifest the editor offers the draft as its first step.
+      navigate(`${STUDIO_PATH}/${created.id}`);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
@@ -137,24 +171,25 @@ function TemplateListView() {
       <header className="page-heading">
         <div>
           <p className="eyebrow">SLOTDECK TEMPLATES</p>
-          <h1>Template Studio</h1>
+          <h1>PPTX Studio</h1>
           <p>
-            Turn a PowerPoint deck into a template for the chat's presentation tools. Each sample slide becomes a
-            layout, and the shapes you mark as slots are what a new deck fills. Everything else — logo, backgrounds,
-            fonts — is copied as designed.
+            Where the PowerPoint templates of the chat's presentation tools are kept, and where the manifest of each
+            is controlled: which sample slides are layouts, and which shapes on them a new deck fills. Everything
+            else — logo, backgrounds, fonts — is copied as designed.
           </p>
         </div>
       </header>
       {error ? <div className="panel-error" role="alert"><span>{error}</span><button onClick={() => setError(null)}>Dismiss</button></div> : null}
 
-      <section className="studio-upload" aria-label="New template">
+      <section className="studio-upload" aria-label="Put a template in the studio">
         <div className="studio-upload-copy">
           <span className="studio-upload-icon"><FileUp size={20} /></span>
           <div>
-            <h2>New template from a .pptx</h2>
+            <h2>Put a .pptx in the studio</h2>
             <p>
-              Upload a deck of sample slides. {chatModelFor(settings)} then drafts its layouts, one call per slide. It
-              gets the measured shapes of each slide — positions, sizes, fonts, sample text — and no pictures of the slides.
+              A deck of sample slides. With a manifest it is ready to use. Without one, {chatModelFor(settings)} drafts
+              the layouts, one call per slide, from the measured shapes of each slide — positions, sizes, fonts,
+              sample text — and no picture of a slide.
             </p>
           </div>
         </div>
@@ -171,8 +206,20 @@ function TemplateListView() {
               if (picked && !name.trim()) setName(picked.name.replace(/\.pptx$/i, ""));
             }}
           />
+          <input
+            ref={manifestRef}
+            className="file-input"
+            type="file"
+            accept=".json,application/json"
+            aria-label="Manifest file"
+            onChange={(event) => setManifestFile(event.target.files?.[0] ?? null)}
+          />
           <button type="button" className="secondary-button" onClick={() => fileRef.current?.click()} disabled={uploading}>
             <Presentation size={15} /> {file ? file.name : "Choose a .pptx"}
+          </button>
+          <button type="button" className="secondary-button" onClick={() => manifestRef.current?.click()} disabled={uploading}
+            title="Optional: the manifest.json that describes this .pptx">
+            <Braces size={15} /> {manifestFile ? manifestFile.name : "Manifest (optional)"}
           </button>
           <input
             className="studio-input"
@@ -205,16 +252,17 @@ function TemplateListView() {
       </div>
       {list ? (
         <p className="studio-note">
-          Templates made here are kept on this server's disk. {list.photos
+          Templates put here are kept on this server's disk. {list.photos
             ? "Decks get generated photos, one image-model call each."
             : "Photos are turned off on this server, so decks are planned without them."}
+          {list.pictures === false ? " The server draws no pictures of slides, so layouts are shown as boxes." : ""}
         </p>
       ) : null}
     </div>
   );
 }
 
-export function TemplateStudioPage() {
+export function PptxStudioPage() {
   const { id } = useParams();
   return id ? <TemplateEditor key={id} id={id} /> : <TemplateListView />;
 }

@@ -267,7 +267,7 @@ export type AppSettings = {
   /** When on, chat auto-creates a billable Vertex cache from the conversation's files. */
   cacheEnabled: boolean;
   cacheTtlSeconds: number;
-  /** The template the presentation tools use, chosen in Template Studio. Unset: the server's default. */
+  /** The template the presentation tools use, chosen in PPTX Studio. Unset: the server's default. */
   presentationTemplate?: string;
 };
 
@@ -310,7 +310,7 @@ export type AppVersion = {
   deployedAt?: string;
   /**
    * The npm packages in use that the footer names: llm-large-files, while LARGE_FILES_ENGINE is
-   * "npm". Absent when there is none to name, and from older servers.
+   * "npm", and slotdeck. Absent from older servers.
    */
   libraries?: LibraryVersion[];
 };

@@ -1,6 +1,6 @@
 // Presentations (slotdeck): what the server and the browser exchange about templates.
 // The chat's own events and cards are in contracts.ts.
-import type { ManifestChange, ManifestIssue, StudioView, TemplateManifest } from "slotdeck";
+import type { ManifestChange, ManifestIssue, StudioView, TemplateManifest, VariantOption } from "slotdeck";
 import type { ProviderId } from "./contracts.js";
 
 /** Template ids are folder names: lowercase letters, digits and dashes. */
@@ -74,4 +74,4 @@ export type ManifestChangeOutcome = {
 
 export type DraftProgress = { done: number; total: number; slide: number };
 
-export type { ManifestChange, ManifestIssue, StudioView, TemplateManifest };
+export type { ManifestChange, ManifestIssue, StudioView, TemplateManifest, VariantOption };

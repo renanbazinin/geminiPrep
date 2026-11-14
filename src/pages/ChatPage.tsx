@@ -910,7 +910,8 @@ export function ChatPage() {
                   {message.presentations?.length ? (
                     <PresentationCards
                       cards={message.presentations}
-                      {...(!running && !preparing && pendingPlanId ? { pendingPlanId } : {})}
+                      {...(pendingPlanId ? { pendingPlanId } : {})}
+                      canApprove={!running && !preparing}
                       onApprove={() => void startWithText("Approved. Create the presentation.", "presentation")}
                     />
                   ) : null}
@@ -983,7 +984,7 @@ export function ChatPage() {
               onClick={() => fileInputRef.current?.click()}
               disabled={running || preparing || processingFiles}
               aria-label="Choose files"
-              title="Attach PDF, Markdown, JSON, text, log, CSV, DOCX, or PPTX to read. To make a PPTX into a template, use Template Studio"
+              title="Attach PDF, Markdown, JSON, text, log, CSV, DOCX, or PPTX to read. To make a PPTX into a template, use PPTX Studio"
             >
               {processingFiles ? <LoaderCircle className="spin" size={18} /> : <Paperclip size={18} />}
             </button>
