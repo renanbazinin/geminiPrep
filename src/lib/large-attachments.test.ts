@@ -3,12 +3,13 @@ import JSZip from "jszip";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AppSettings, ChatMessage, LargeFilesConfig } from "../../shared/contracts";
 import { DEFAULT_INTERACTIONS } from "../../shared/interactions";
-import { attachmentKind, attachmentToRequestPart, deleteAttachmentPayloads, goesToServer, processAttachment } from "./attachments";
+import { attachmentKind, attachmentToRequestPart, deleteAttachmentPayloads, goesToServer, processAttachment, textGoesToServer } from "./attachments";
 import { selectInteractionHistory } from "./interaction-history";
 
 const limits: LargeFilesConfig = {
   maxUploadBytes: 50 * 1024 * 1024,
   serverThresholdBytes: 1_000,
+  inlineTokens: 200_000,
   pdfInlineMaxBytes: 7 * 1024 * 1024,
   ttlHours: 72,
 };
@@ -72,15 +73,39 @@ describe("large attachment routing", () => {
     expect(goesToServer({ size: 21 * 1024 * 1024 }, "pptx", high)).toBe(true);
   });
 
-  it("sends text under the threshold as it is, even past 1,000,000 characters", async () => {
+  it("sends text under both limits as it is, even past 1,000,000 characters", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
     vi.stubGlobal("indexedDB", fakeIndexedDb());
     const { file, text } = longTextFile();
-    const attachment = await processAttachment(file, { largeFiles: { ...limits, serverThresholdBytes: 4 * 1024 * 1024 } });
+    const attachment = await processAttachment(file, { largeFiles: { ...limits, serverThresholdBytes: 4 * 1024 * 1024, inlineTokens: 1_000_000 } });
     expect(attachment.document).toBeUndefined();
     expect(attachment.extractedCharacters).toBe(text.length);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("uploads text under the size threshold when it is estimated at more tokens than are sent in full", async () => {
+    const fetchMock = vi.fn(async () => uploadResponse());
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("indexedDB", fakeIndexedDb());
+    // 1.3 MB, about 530,000 tokens by the estimate: under a 4 MB threshold, over 200,000 tokens.
+    const { file } = longTextFile();
+    const attachment = await processAttachment(file, { largeFiles: { ...limits, serverThresholdBytes: 4 * 1024 * 1024 } });
+    expect(attachment.document?.id).toBe(`doc_${"a".repeat(32)}`);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect((fetchMock.mock.calls[0] as unknown as [string])[0]).toBe("/api/documents");
+  });
+
+  it("judges text by its tokens, so a dense log goes to the server before prose of the same size", () => {
+    const wide = { ...limits, serverThresholdBytes: 4 * 1024 * 1024 };
+    const logLine = "2026-11-10T14:03:17.482Z ERROR [payments-api] host=prod-pay-01 trace=cb48642de01379d5 PAY-5031 pool exhausted active=4 max=4\n";
+    const log = logLine.repeat(4_000); // about 500 KB
+    const prose = "The quick brown fox jumps over the lazy dog and nobody was surprised. ".repeat(Math.ceil(log.length / 70)).slice(0, log.length);
+    expect(textGoesToServer(log, wide)).toBe(true);
+    expect(textGoesToServer(prose, wide)).toBe(false);
+    // The size threshold still applies on its own.
+    expect(textGoesToServer("short", { ...wide, serverThresholdBytes: 4 })).toBe(true);
+    expect(textGoesToServer("short", wide)).toBe(false);
   });
 
   it("still caps extracted text at 1,000,000 characters without large-file limits", async () => {

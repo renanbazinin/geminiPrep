@@ -1,4 +1,5 @@
 import type { ChatAttachment, ChatAttachmentKind, ChatRequestFilePart, LargeFilesConfig } from "../../shared/contracts";
+import { estimateTokens } from "../../shared/token-estimate";
 import { createId } from "./storage";
 import { deleteDocument, uploadDocument } from "./api";
 
@@ -159,12 +160,22 @@ function ensureExtractedSize(text: string, name: string, maxCharacters: number):
 /**
  * Whether a file goes to the server instead of being sent as it is, judged by its size: a PDF
  * against `pdfInlineMaxBytes`, text, DOCX and PPTX against `serverThresholdBytes`, and never more
- * than this browser keeps. A DOCX or PPTX under the threshold still goes when its extracted text
- * turns out to be longer than the threshold.
+ * than this browser keeps. Text, DOCX and PPTX under the threshold still go when their text is
+ * long or dense (see `textGoesToServer`).
  */
 export function goesToServer(file: Pick<File, "size">, kind: ChatAttachmentKind, limits: LargeFilesConfig): boolean {
   if (kind === "pdf") return file.size > limits.pdfInlineMaxBytes;
   return file.size > Math.min(limits.serverThresholdBytes, MAX_ATTACHMENT_BYTES);
+}
+
+/**
+ * Whether the text of a file that is small enough by size still goes to the server: it is longer
+ * than the threshold, or it is estimated at more tokens than the server sends in full. Size alone
+ * says little about tokens: a 3 MB log can be 1.8 million tokens, more than a 1M-token model
+ * accepts, where 3 MB of prose is about 700,000.
+ */
+export function textGoesToServer(text: string, limits: LargeFilesConfig): boolean {
+  return text.length > limits.serverThresholdBytes || estimateTokens(text) > limits.inlineTokens;
 }
 
 async function uploadAttachment(file: File, kind: ChatAttachmentKind, limits: LargeFilesConfig): Promise<ChatAttachment> {
@@ -212,8 +223,8 @@ export async function processAttachment(file: File, options: { largeFiles?: Larg
     if (kind === "docx") text = await extractDocxText(await file.arrayBuffer());
     else if (kind === "pptx") text = await extractPptxText(await file.arrayBuffer());
     else text = await file.text();
-    if (limits && text.length > limits.serverThresholdBytes) return uploadAttachment(file, kind, limits);
-    // With large-file limits, longer text has just gone to the server, so the text left is sent as it is.
+    if (limits && textGoesToServer(text, limits)) return uploadAttachment(file, kind, limits);
+    // With large-file limits, longer or denser text has just gone to the server, so the text left is sent as it is.
     text = ensureExtractedSize(text, file.name, limits ? limits.serverThresholdBytes : MAX_EXTRACTED_CHARACTERS);
     extractedCharacters = text.length;
     await storePayload(storageKey, { kind: "text", text });

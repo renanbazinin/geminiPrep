@@ -13,7 +13,7 @@ import { baseRequestSize, materializeDocuments } from "../chat/document-stream.j
 import { createLargeFiles as createOriginalLargeFiles, MemoryDocumentStore as OriginalMemoryStore } from "../../packages/large-files/src/index.js";
 import { GEMINI_4_MIN_OUTPUT_TOKENS } from "../../shared/gemini-4.js";
 import { DEFAULT_INTERACTIONS } from "../../shared/interactions.js";
-import { createServerLargeFiles, removeOrphanOriginals, resolveLargeFilesEngine, resolvePagePlacement } from "./config.js";
+import { createServerLargeFiles, publicLargeFilesConfig, removeOrphanOriginals, resolveInlineTokens, resolveLargeFilesEngine, resolvePagePlacement } from "./config.js";
 
 /** Every upload and chat test runs on both engines (LARGE_FILES_ENGINE=npm and =original). */
 const ENGINES = [
@@ -81,6 +81,19 @@ describe("large files engine flag", () => {
   it("refuses an unknown engine instead of silently picking one", () => {
     vi.stubEnv("LARGE_FILES_ENGINE", "v2");
     expect(() => resolveLargeFilesEngine()).toThrow('LARGE_FILES_ENGINE must be "npm" or "original", not "v2".');
+  });
+
+  it("tells the browser how many tokens of file text are sent in full, which is its limit for keeping a file", () => {
+    for (const name of ["LARGE_FILES_ENGINE", "LARGE_FILES_INLINE_TOKENS", "LARGE_FILES_CONTEXT_TOKENS"]) vi.stubEnv(name, "");
+    expect(publicLargeFilesConfig().inlineTokens).toBe(200_000);
+    vi.stubEnv("LARGE_FILES_INLINE_TOKENS", "50000");
+    expect(publicLargeFilesConfig().inlineTokens).toBe(50_000);
+    expect(resolveInlineTokens("original")).toBe(50_000);
+    // The npm engine works the limit out from a smaller context window; the original engine keeps its default.
+    vi.stubEnv("LARGE_FILES_INLINE_TOKENS", "");
+    vi.stubEnv("LARGE_FILES_CONTEXT_TOKENS", "128000");
+    expect(resolveInlineTokens("npm")).toBe(64_000);
+    expect(resolveInlineTokens("original")).toBe(200_000);
   });
 });
 

@@ -16,7 +16,7 @@ import { getVertexAccessToken } from "../vertex-auth.js";
 import { resolveLargeFilesSettings, type ServerLargeFiles } from "../documents/config.js";
 import { streamWithPackage } from "./document-stream-npm.js";
 import { proxyChatStream } from "./stream.js";
-import { createUpstreamRequest, describeUpstreamRequest, parseSseJson, upstreamErrorMessage } from "./upstream.js";
+import { createUpstreamRequest, describeUpstreamRequest, parseSseJson, readUpstreamError, upstreamErrorMessage } from "./upstream.js";
 
 /** Sent, invisibly to the user, when the model must stop using tools and answer. */
 const FINAL_ANSWER_REQUEST = "Stop using tools now. Answer my question using only what the tools returned above, with line citations. Say plainly what you could not find.";
@@ -219,7 +219,7 @@ async function runToolLoop(options: {
   const streamTurn = async (label: string): Promise<{ parts: Part[]; calls: GeminiFunctionCall[] } | null> => {
     const result = await fetchImpl(upstream.url, { method: "POST", headers, body: JSON.stringify(body), signal });
     if (!result.ok) {
-      const value: unknown = await result.json().catch(() => null);
+      const value = await readUpstreamError(result);
       send({ event: "error", data: { message: upstreamErrorMessage(value, result.status), status: result.status, finishedAt: new Date().toISOString(), durationMs: Date.now() - startedMs } });
       return null;
     }

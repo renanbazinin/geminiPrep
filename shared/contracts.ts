@@ -125,6 +125,12 @@ export type LargeFilesConfig = {
   maxUploadBytes: number;
   /** Text, DOCX, and PPTX files above this size (or extracted length) are uploaded. */
   serverThresholdBytes: number;
+  /**
+   * Text, DOCX, and PPTX files whose text is estimated at more tokens than this are uploaded too,
+   * whatever their size. It is the most tokens of file text the server sends in full, so a file
+   * the browser keeps is one the server would not have searched with tools either.
+   */
+  inlineTokens: number;
   /** PDFs up to this size are sent inline so Gemini can read their layout and images. */
   pdfInlineMaxBytes: number;
   ttlHours: number;

@@ -3,6 +3,7 @@ import path from "node:path";
 import {
   createLargeFiles as createPackageLargeFiles,
   FileDocumentStore as PackageFileDocumentStore,
+  resolveBudget as resolvePackageBudget,
   type LargeFiles as PackageLargeFiles,
 } from "llm-large-files";
 import type { GeminiToolFilePlacement } from "llm-large-files/gemini";
@@ -120,11 +121,20 @@ export function environmentBudget(): Partial<typeof DEFAULT_BUDGET> {
   return budget;
 }
 
+/**
+ * The most tokens of file text the engine in use sends in full (LARGE_FILES_INLINE_TOKENS, 200,000
+ * by default). The npm engine works it out from the context window when only that is set.
+ */
+export function resolveInlineTokens(engine: LargeFilesEngine = resolveLargeFilesEngine()): number {
+  return engine === "npm" ? resolvePackageBudget(environmentBudget()).inlineTokens : resolveLargeFilesSettings().budget.inlineTokens;
+}
+
 export function publicLargeFilesConfig(): LargeFilesConfig {
   const settings = resolveLargeFilesSettings();
   return {
     maxUploadBytes: settings.maxUploadBytes,
     serverThresholdBytes: settings.serverThresholdBytes,
+    inlineTokens: resolveInlineTokens(),
     pdfInlineMaxBytes: settings.pdfInlineMaxBytes,
     ttlHours: settings.ttlHours,
   };

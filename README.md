@@ -46,7 +46,10 @@ only metadata, preventing large base64 payloads from filling `localStorage`.
 
 **Large files** (books, logs, big exports, up to 100 MB) are uploaded to the server instead: text,
 DOCX and PPTX over 512 KB and PDFs over 7 MB by default (a DOCX or PPTX whose text is longer than
-that goes too). A smaller file is sent to Gemini as it is, without counting its tokens. Each turn,
+that goes too). A text, DOCX or PPTX file under that size is uploaded as well when the browser
+estimates its text at more than 200K tokens, the most the server sends in full: a log has two or
+three times the tokens of prose of the same size, and 3 MB of one can be more than a 1M-token model
+accepts. A file under both limits is sent to Gemini as it is. Each turn,
 the server decides whether an uploaded file fits the model's limits (by default 200K tokens of file
 text, within 10 MB per request and a 1M-token context) and sends it in full, or gives Gemini
 a summary card plus tools to search, read line ranges, or read the whole file in parts. The steps

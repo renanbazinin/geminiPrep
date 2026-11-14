@@ -198,6 +198,24 @@ describe("Interactions HTTP streaming", () => {
     expect(provider).toHaveBeenCalledTimes(1);
   });
 
+  it("shows the provider's message when the error arrives as a server-sent event", async () => {
+    // What the Gemini API answered a streamed interaction of 1.8 million tokens (November 2026):
+    // an event, not a JSON object, under a JSON content type.
+    const sent = 'event: error\ndata: {"error":{"message":"The input token count exceeds the maximum number of tokens allowed 1048576.","code":"invalid_request"},"event_type":"error"}\n\n';
+    const provider = vi.fn<typeof fetch>().mockResolvedValue(new Response(sent, { status: 400, headers: { "Content-Type": "application/json; charset=UTF-8" } }));
+    const response = await request(createApp({ fetchImpl: provider })).post("/api/chat/stream").send(body());
+    expect(eventsFrom(response.text).at(-1)).toMatchObject({
+      event: "error",
+      data: { status: 400, message: "The input token count exceeds the maximum number of tokens allowed 1048576." },
+    });
+  });
+
+  it("falls back to the status when an error body is neither JSON nor an event", async () => {
+    const provider = vi.fn<typeof fetch>().mockResolvedValue(new Response("<html>Bad Gateway</html>", { status: 502 }));
+    const response = await request(createApp({ fetchImpl: provider })).post("/api/chat/stream").send(body());
+    expect(eventsFrom(response.text).at(-1)).toMatchObject({ event: "error", data: { status: 502, message: "The model provider returned HTTP 502." } });
+  });
+
   it("keeps the original error when reference verification loses access or its network connection", async () => {
     for (const accessFailure of [true, false]) {
       const provider = vi.fn<typeof fetch>().mockResolvedValueOnce(new Response(JSON.stringify({ error: { message: "Invalid argument" } }), { status: 400 }));

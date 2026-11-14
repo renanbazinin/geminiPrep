@@ -11,6 +11,7 @@ import {
   extractChunkText,
   mergeFunctionCall,
   parseSseJson,
+  readUpstreamError,
   upstreamErrorMessage,
   type ExtractedFunctionCall,
 } from "./upstream.js";
@@ -50,7 +51,7 @@ async function streamUpstreamHop(options: {
   upstream.init.signal = options.signal;
   const upstreamResponse = await options.fetchImpl(upstream.url, upstream.init);
   if (!upstreamResponse.ok) {
-    const value = await upstreamResponse.json().catch(() => null);
+    const value = await readUpstreamError(upstreamResponse);
     const finishedAt = new Date().toISOString();
     sendEvent(options.response, {
       event: "error",
