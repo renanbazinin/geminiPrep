@@ -37,6 +37,7 @@
     "react-router-dom": "^7.1.1",
     "rehype-sanitize": "^6.0.0",
     "remark-gfm": "^4.0.1",
+    "slotdeck": "0.2.0",
     "unpdf": "1.4.0"
   },
   "devDependencies": {

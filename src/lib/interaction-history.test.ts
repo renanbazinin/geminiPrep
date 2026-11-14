@@ -32,6 +32,9 @@ describe("conversation continuation", () => {
     ]) expect(selectInteractionHistory(messages, other, null).messages).toBe(messages);
     expect(selectInteractionHistory(messages, settings, "image").messages).toBe(messages);
   });
+  it("sends the whole conversation to the presentation tools, which keep none on the provider", () => {
+    expect(selectInteractionHistory(messages, settings, "presentation")).toEqual({ messages, previousInteractionId: undefined });
+  });
   it("persists reusable IDs across reloads and keeps conversations separate", () => {
     saveConversations([{ id: "chat1", title: "Saved", createdAt: "2026-10-08", updatedAt: "2026-10-08", messages }]);
     expect(selectInteractionHistory(loadConversations()[0].messages, settings, null).previousInteractionId).toBe("remote_1");

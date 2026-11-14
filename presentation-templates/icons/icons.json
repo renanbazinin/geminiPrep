@@ -1,0 +1,50 @@
+[
+  {
+    "id": "target",
+    "description": "a target: goal, focus, aim"
+  },
+  {
+    "id": "check",
+    "description": "a check mark in a circle: done, approved, quality"
+  },
+  {
+    "id": "bolt",
+    "description": "a lightning bolt: energy, speed, power"
+  },
+  {
+    "id": "heart",
+    "description": "a heart: care, health, loyalty"
+  },
+  {
+    "id": "star",
+    "description": "a star: favourite, rating, excellence"
+  },
+  {
+    "id": "chart",
+    "description": "a rising bar chart: growth, results, data"
+  },
+  {
+    "id": "clock",
+    "description": "a clock: time, schedule, duration"
+  },
+  {
+    "id": "people",
+    "description": "two people: team, community, customers"
+  },
+  {
+    "id": "gear",
+    "description": "a gear: process, settings, operations"
+  },
+  {
+    "id": "leaf",
+    "description": "a leaf: nature, sustainability, growth"
+  },
+  {
+    "id": "globe",
+    "description": "a globe: world, international, online"
+  },
+  {
+    "id": "shield",
+    "description": "a shield with a check: safety, security, trust"
+  }
+]

@@ -15,6 +15,8 @@ RUN npm ci --omit=dev --no-audit --no-fund && npm cache clean --force
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/dist-server ./dist-server
 COPY docs ./docs
+# The presentation templates shipped with the app, and the icon set decks pick from.
+COPY presentation-templates ./presentation-templates
 # The server writes small state files (Jira receipts, Connect-form settings) next to itself.
 RUN chown -R node:node /app
 USER node

@@ -27,6 +27,8 @@ import { proxyChatStream } from "./chat/stream.js";
 import { hasDocumentParts, proxyDocumentChat } from "./chat/document-stream.js";
 import { createServerLargeFiles, type ServerLargeFiles } from "./documents/config.js";
 import { documentRoutes } from "./documents/routes.js";
+import { presentationRoutes } from "./presentations/routes.js";
+import { TemplateLibrary } from "./presentations/templates.js";
 import { validateChatRequest } from "./chat/validation.js";
 import {
   CACHE_DEFAULT_TTL_SECONDS,
@@ -51,10 +53,13 @@ export function createApp(options: {
   largeFiles?: ServerLargeFiles;
   /** Shared password for the whole app. Defaults to APP_PASSWORD; empty leaves the app open. */
   password?: string;
+  /** Presentation templates and what the chat tools make with them. Defaults to PRESENTATIONS_DIR. */
+  presentations?: TemplateLibrary;
 } = {}) {
   const app = express();
   const getCacheAccessToken = options.getAccessToken ?? getVertexAccessToken;
   const largeFiles = options.largeFiles ?? createServerLargeFiles();
+  const presentations = options.presentations ?? new TemplateLibrary();
   app.disable("x-powered-by");
   const password = (options.password ?? process.env.APP_PASSWORD ?? "").trim();
   if (password) {
@@ -68,6 +73,8 @@ export function createApp(options: {
   app.use(cors());
   // Before express.json(): uploads arrive as raw bytes, including JSON files.
   app.use("/api/documents", documentRoutes(largeFiles));
+  // Also before express.json(): a template is uploaded as the raw bytes of its pptx.
+  app.use("/api/presentations", presentationRoutes({ library: presentations, fetchImpl: options.fetchImpl }));
   app.use(express.json({ limit: "30mb" }));
   app.use("/api/jira", jiraRoutes({ fetchImpl: options.fetchImpl }));
   app.use("/api/special-group", specialGroupRoutes({ fetchImpl: options.fetchImpl }));
@@ -94,7 +101,7 @@ export function createApp(options: {
     const abortController = new AbortController();
     res.on("close", () => abortController.abort());
     try {
-      const stream = { request, project, response: res, fetchImpl: options.fetchImpl, signal: abortController.signal };
+      const stream = { request, project, response: res, fetchImpl: options.fetchImpl, signal: abortController.signal, presentations };
       if (hasDocumentParts(request)) await proxyDocumentChat({ ...stream, largeFiles });
       else await proxyChatStream(stream);
     } catch (error) {

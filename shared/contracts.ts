@@ -1,7 +1,7 @@
 export type ProviderId = "vertex" | "gemini";
 export type MessageRole = "user" | "assistant";
 export type MessageStatus = "streaming" | "complete" | "stopped" | "error";
-export type ChatToolId = "image" | "graph";
+export type ChatToolId = "image" | "graph" | "presentation";
 export type ChatImageMimeType = "image/png" | "image/jpeg" | "image/webp" | "image/gif";
 
 export type ModelOption = {
@@ -157,6 +157,39 @@ export type ChatGeneratedImage = {
   mimeType: ChatImageMimeType;
 };
 
+/**
+ * What a presentation tool made in a turn: a plan to approve, or a rendered deck. The plan,
+ * the deck and its pictures stay on the server; the browser keeps this summary.
+ */
+export type ChatPresentationCard = {
+  /** The plan or deck id the tools know it by. */
+  id: string;
+  templateId: string;
+  templateName: string;
+  title: string;
+  /** One sentence from the tool on what an edit changed. */
+  summary?: string;
+  /**
+   * The tool's result as the chat model saw it. It is sent back as a note with this message's
+   * text on later turns, which is how the model knows the id to create or change.
+   */
+  context: string;
+} & (
+  | {
+      kind: "plan";
+      language?: string;
+      slides: Array<{ number: number; layout: string; purpose: string }>;
+    }
+  | {
+      kind: "deck";
+      slides: Array<{ number: number; layout: string; title?: string }>;
+      /** Where the pptx is downloaded from. */
+      file: string;
+      bytes: number;
+      warnings?: string[];
+    }
+);
+
 export type ChatStreamRequestMessage = {
   role: MessageRole;
   content: string;
@@ -170,8 +203,10 @@ export type ChatMessage = {
   interaction?: { id: string; model: string; apiVersion: "v1" | "v1beta" | "v1beta1"; project?: string };
   thinkingSummary?: string;
   activity?: string;
-  /** Steps the model took on large files while answering. */
+  /** Steps the model took on large files, or with the presentation tools, while answering. */
   steps?: string[];
+  /** Plans and decks the presentation tools made in this turn. */
+  presentations?: ChatPresentationCard[];
   id: string;
   role: MessageRole;
   content: string;
@@ -232,6 +267,8 @@ export type AppSettings = {
   /** When on, chat auto-creates a billable Vertex cache from the conversation's files. */
   cacheEnabled: boolean;
   cacheTtlSeconds: number;
+  /** The template the presentation tools use, chosen in Template Studio. Unset: the server's default. */
+  presentationTemplate?: string;
 };
 
 /** A cache this browser created, tracked locally so chat can reuse it until it expires. */
@@ -298,6 +335,8 @@ export type ChatStreamRequest = {
   tool?: ChatToolId;
   /** Full cachedContents resource name. Its content is prepended by Vertex, so never resend it. */
   cachedContent?: string;
+  /** Template id for the presentation tools. Unset: the server's default template. */
+  presentationTemplate?: string;
   messages: ChatStreamRequestMessage[];
 };
 
@@ -324,6 +363,8 @@ export type ChatStreamEvent =
   | { event: "delta"; data: { text: string } }
   | { event: "image"; data: ChatStreamImageData }
   | { event: "tool"; data: ChatStreamToolData }
+  /** A plan or deck a presentation tool just made. */
+  | { event: "presentation"; data: ChatPresentationCard }
   | { event: "done"; data: ChatStreamDone }
   | { event: "error"; data: ChatStreamErrorData };
 

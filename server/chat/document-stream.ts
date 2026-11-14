@@ -14,6 +14,7 @@ import {
 import { toGenerateContentUrl } from "../special-group/model-loop.js";
 import { getVertexAccessToken } from "../vertex-auth.js";
 import { resolveLargeFilesSettings, type ServerLargeFiles } from "../documents/config.js";
+import type { TemplateLibrary } from "../presentations/templates.js";
 import { streamWithPackage } from "./document-stream-npm.js";
 import { proxyChatStream } from "./stream.js";
 import { createUpstreamRequest, describeUpstreamRequest, parseSseJson, upstreamErrorMessage } from "./upstream.js";
@@ -112,6 +113,7 @@ export async function proxyDocumentChat(options: {
   largeFiles: ServerLargeFiles;
   fetchImpl?: typeof fetch;
   signal?: AbortSignal;
+  presentations?: TemplateLibrary;
 }): Promise<void> {
   const { request, response, largeFiles } = options;
   const ids = documentIds(request);
@@ -135,8 +137,9 @@ export async function proxyDocumentChat(options: {
   const looks = !searches && largeFiles.engine === "npm" && !request.tool && !request.interactions
     && resolveLargeFilesSettings().keepPdfs
     && (await largeFiles.files.prepare(ids, base, { viewPages: true })).viewable.length > 0;
-  // Nothing to search or to look at, or the image model is answering (it cannot call tools): use the normal path.
-  if ((!searches && !looks) || request.tool === "image") {
+  // Nothing to search or to look at, or the image model is answering (it cannot call tools), or the
+  // presentation tools are (they plan from the text or summary card of each file): use the normal path.
+  if ((!searches && !looks) || request.tool === "image" || request.tool === "presentation") {
     await proxyChatStream({ ...options, request: materialized });
     return;
   }

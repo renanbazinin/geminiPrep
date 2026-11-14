@@ -1,4 +1,5 @@
 import type {
+  ChatPresentationCard,
   ChatStreamEvent,
   ChatStreamImageData,
   ChatStreamRequest,
@@ -58,6 +59,7 @@ export async function streamChat(
     onGrounding?(data: Extract<ChatStreamEvent, { event: "grounding" }>["data"]): void;
     onImage?(image: ChatStreamImageData): void | Promise<void>;
     onTool?(tool: ChatStreamToolData): void | Promise<void>;
+    onPresentation?(card: ChatPresentationCard): void;
     onDone?(event: Extract<ChatStreamEvent, { event: "done" }>["data"]): void;
     onError?(event: Extract<ChatStreamEvent, { event: "error" }>["data"]): void;
   },
@@ -125,6 +127,10 @@ export async function streamChat(
             ...(typeof data.model === "string" ? { model: data.model } : {}),
             ...(typeof data.region === "string" ? { region: data.region } : {}),
           });
+        }
+        if (eventName === "presentation" && typeof data.id === "string" && typeof data.context === "string"
+          && Array.isArray(data.slides) && (data.kind === "plan" || data.kind === "deck")) {
+          handlers.onPresentation?.(data as unknown as ChatPresentationCard);
         }
         if (eventName === "done") {
           terminalEvent = true;

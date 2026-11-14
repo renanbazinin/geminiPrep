@@ -26,14 +26,16 @@ import type {
   ChatMessageDebug,
   ChatAttachment,
   ChatGeneratedImage,
+  ChatPresentationCard,
   ChatStreamErrorData,
   ChatStreamRequest,
   ChatToolId,
 } from "../../shared/contracts";
-import { IMAGE_MODEL_ID, IMAGE_MODEL_REGION } from "../../shared/chat-tools";
+import { IMAGE_MODEL_ID, IMAGE_MODEL_REGION, contentWithPresentationNotes } from "../../shared/chat-tools";
 import { compactDebugValue } from "../../shared/debug";
 import { MarkdownMessage } from "../components/MarkdownMessage";
 import { MessageDebugBubble } from "../components/MessageDebugBubble";
+import { PresentationCards } from "../components/PresentationCards";
 import { useApp } from "../contexts/AppContext";
 import { useConfig } from "../contexts/ConfigContext";
 import { streamChatWithRecovery } from "../lib/interaction-recovery";
@@ -60,10 +62,11 @@ import { interactionApiVersion, usesInteractions } from "../../shared/interactio
 import { chatModelFor, gemini4RegionProblem, isGemini4Model } from "../../shared/gemini-4";
 import { ProModelToggle } from "../components/ProModelToggle";
 
-const SUGGESTIONS = [
-  "Explain how Vertex AI regional endpoints differ from the global endpoint.",
-  "Help me design a safe model rollout checklist for an enterprise chatbot.",
-  "Compare Gemini Flash and Pro for a customer-support assistant.",
+/** A suggestion that names a tool goes to it whatever the composer's tool choice is. */
+const SUGGESTIONS: Array<{ text: string; tool?: ChatToolId }> = [
+  { text: "Explain how Vertex AI regional endpoints differ from the global endpoint." },
+  { text: "Help me design a safe model rollout checklist for an enterprise chatbot." },
+  { text: "Make a 6-slide presentation that compares Gemini Flash and Pro for a customer-support assistant.", tool: "presentation" },
 ];
 
 function directionFor(text: string): "rtl" | "ltr" {
@@ -76,6 +79,7 @@ async function messageHistory(messages: ChatMessage[]): Promise<ChatStreamReques
       Boolean(message.content.trim())
       || Boolean(message.attachments?.length)
       || Boolean(message.generatedImages?.length)
+      || Boolean(message.presentations?.length)
     ))
     .map(async (message) => {
       const files = [
@@ -88,11 +92,14 @@ async function messageHistory(messages: ChatMessage[]): Promise<ChatStreamReques
       ];
       return {
         role: message.role,
-        content: message.content,
+        // A plan or deck made in this turn goes along as a note, so the model has its id later.
+        content: contentWithPresentationNotes(message.content, message.presentations),
         ...(files.length ? { files } : {}),
       };
     }));
 }
+
+const TOOL_LABELS: Record<ChatToolId, string> = { image: "image", graph: "graph", presentation: "presentation" };
 
 function fileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -195,8 +202,9 @@ function ComposerTools({
       document.removeEventListener("keydown", onKey);
     };
   }, [open]);
-  const Icon = selected === "image" ? ImageIcon : selected === "graph" ? Share2 : Wrench;
-  const title = selected === "image" ? "Generate image" : selected === "graph" ? "Generate graph" : interactionMode ? "Image and diagram tools" : "Tools (Auto)";
+  const Icon = selected === "image" ? ImageIcon : selected === "graph" ? Share2 : selected === "presentation" ? Presentation : Wrench;
+  const title = selected === "image" ? "Generate image" : selected === "graph" ? "Generate graph" : selected === "presentation" ? "Make a presentation"
+    : interactionMode ? "Image, diagram and presentation tools" : "Tools (Auto)";
   return (
     <div className="composer-tools" ref={wrapRef}>
       <button
@@ -216,6 +224,7 @@ function ComposerTools({
           {([
             ["image", "Generate image", ImageIcon],
             ["graph", "Generate graph", Share2],
+            ["presentation", "Make a presentation", Presentation],
           ] as const).map(([id, label, ItemIcon]) => (
             <button
               key={id}
@@ -241,6 +250,7 @@ function ComposerTools({
 function composerPlaceholder(tool: ChatToolId | null, hasAttachments: boolean): string {
   if (tool === "image") return "Describe the image…";
   if (tool === "graph") return "Describe the diagram…";
+  if (tool === "presentation") return hasAttachments ? "What presentation should these files become?" : "Describe the presentation, or what to change…";
   if (hasAttachments) return "Ask about these files…";
   return "Message Gemini Prep…";
 }
@@ -437,6 +447,7 @@ export function ChatPage() {
     const sources: NonNullable<ChatMessage["sources"]> = [];
     const searchSuggestions: string[] = [];
     let generatedImages: ChatGeneratedImage[] = [];
+    const presentations: ChatPresentationCard[] = [];
     let debug = initialDebug;
     let recovering = false;
     const clientStartedMs = Date.parse(initialDebug.timing.clientStartedAt);
@@ -556,6 +567,13 @@ export function ChatPage() {
             },
           });
         },
+        onPresentation(card) {
+          presentations.push(card);
+          updateDebug({
+            ...debug,
+            response: { ...debug.response, events: [...(debug.response.events ?? []), { event: "presentation", data: card }] },
+          }, { presentations: [...presentations] });
+        },
         onDone(done) {
           updateDebug({
             ...debug,
@@ -647,12 +665,14 @@ export function ChatPage() {
     previousInteractionId?: string,
   ): ChatStreamRequest {
     const image = tool === "image";
+    // The presentation tools run their own loop on Generate Content, whichever API is selected.
+    const interactions = usesInteractions(settings) && tool !== "presentation";
     const model = image ? IMAGE_MODEL_ID : activeModel;
     const region = settings.provider === "vertex"
-      ? (usesInteractions(settings) ? "global" : image ? IMAGE_MODEL_REGION : settings.region)
+      ? (interactions ? "global" : image ? IMAGE_MODEL_REGION : settings.region)
       : undefined;
     return {
-      ...(usesInteractions(settings) ? {
+      ...(interactions ? {
         interactions: settings.interactions,
         ...(settings.provider === "vertex" && config?.project ? { interactionProject: config.project } : {}),
         ...(previousInteractionId ? { previousInteractionId } : {}),
@@ -663,8 +683,10 @@ export function ChatPage() {
       systemInstruction: settings.systemInstruction,
       temperature: settings.temperature,
       maxOutputTokens: settings.maxOutputTokens,
-      ...(!image && !usesInteractions(settings) ? { thinkingLevel: settings.thinkingLevel } : {}),
+      ...(!image && !interactions ? { thinkingLevel: settings.thinkingLevel } : {}),
       ...(tool ? { tool } : {}),
+      // Sent on every turn: with tools on Auto the model may hand any turn to the presentation tools.
+      ...(!image && settings.presentationTemplate ? { presentationTemplate: settings.presentationTemplate } : {}),
       messages,
     };
   }
@@ -678,7 +700,8 @@ export function ChatPage() {
     };
   }
 
-  async function startWithText(text: string) {
+  /** `toolForTurn` sends this one turn to a tool without changing the composer's choice. */
+  async function startWithText(text: string, toolForTurn?: ChatToolId) {
     const clean = text.trim() || (pendingAttachments.length > 0 ? "Please analyze the attached files." : "");
     if (!clean || running || preparing || processingFiles || !config) return;
     setPreparing(true);
@@ -686,17 +709,17 @@ export function ChatPage() {
     const conversationId = activeConversation.id;
     const now = new Date().toISOString();
     const attachments = [...pendingAttachmentsRef.current];
+    const tool = toolForTurn ?? selectedTool;
     try {
       // Large server files are re-planned each turn, so they need the full history.
       const plan = attachments.some((attachment) => attachment.document)
         ? { messages: activeConversation.messages, previousInteractionId: undefined }
-        : selectInteractionHistory(activeConversation.messages, settings, selectedTool, config.project);
+        : selectInteractionHistory(activeConversation.messages, settings, tool, config.project);
       const currentHistory = await messageHistory(plan.messages);
       const files = attachments.length
         ? await Promise.all(attachments.map(attachmentToRequestPart))
         : undefined;
       const messages = [...currentHistory, { role: "user" as const, content: clean, ...(files ? { files } : {}) }];
-      const tool = selectedTool;
       const request = buildStreamRequest(messages, tool, plan.previousInteractionId);
       const debug = initialDebugTrace(request, now);
       const userMessage: ChatMessage = {
@@ -779,6 +802,11 @@ export function ChatPage() {
     () => [...activeConversation.messages].reverse().find((message) => message.role === "assistant")?.id,
     [activeConversation.messages],
   );
+  // A plan waits for an answer while it is the last thing the presentation tools made.
+  const pendingPlanId = useMemo(() => {
+    const last = activeConversation.messages.flatMap((message) => message.presentations ?? []).at(-1);
+    return last?.kind === "plan" ? last.id : undefined;
+  }, [activeConversation.messages]);
 
   return (
     <div className="chat-page">
@@ -811,8 +839,8 @@ export function ChatPage() {
             </p>
             <div className="suggestion-grid">
               {SUGGESTIONS.map((suggestion) => (
-                <button key={suggestion} onClick={() => void startWithText(suggestion)} disabled={!config || running || preparing}>
-                  {suggestion}
+                <button key={suggestion.text} onClick={() => void startWithText(suggestion.text, suggestion.tool)} disabled={!config || running || preparing}>
+                  {suggestion.text}
                   <ArrowUp size={15} />
                 </button>
               ))}
@@ -832,10 +860,10 @@ export function ChatPage() {
                       <span className="message-meta">
                         {message.request.provider === "vertex" ? "Vertex" : "API"} · {message.request.model}
                         {message.request.region ? ` · ${message.request.region}` : ""}
-                        {message.tool === "image" ? " · image" : message.tool === "graph" ? " · graph" : ""}
+                        {message.tool ? ` · ${TOOL_LABELS[message.tool]}` : ""}
                       </span>
                     ) : message.tool ? (
-                      <span className="message-meta">{message.tool === "image" ? "image" : "graph"}</span>
+                      <span className="message-meta">{TOOL_LABELS[message.tool]}</span>
                     ) : null}
                   </div>
                   <div className="message-content" dir={directionFor(message.content)}>
@@ -843,7 +871,7 @@ export function ChatPage() {
                     {message.thinkingSummary ? <details className="thinking-summary"><summary>Thinking summary</summary><p>{message.thinkingSummary}</p></details> : null}
                     {message.steps?.length ? (
                       <details className="thinking-summary file-steps">
-                        <summary>Steps on large files ({message.steps.length})</summary>
+                        <summary>{message.tool === "presentation" ? "Presentation steps" : "Steps on large files"} ({message.steps.length})</summary>
                         <ol>{message.steps.map((step, index) => <li key={index}>{step}</li>)}</ol>
                       </details>
                     ) : null}
@@ -879,8 +907,15 @@ export function ChatPage() {
                       ))}
                     </div>
                   ) : null}
+                  {message.presentations?.length ? (
+                    <PresentationCards
+                      cards={message.presentations}
+                      {...(!running && !preparing && pendingPlanId ? { pendingPlanId } : {})}
+                      onApprove={() => void startWithText("Approved. Create the presentation.", "presentation")}
+                    />
+                  ) : null}
                   {message.attachments?.length ? <MessageAttachments attachments={message.attachments} /> : null}
-                  {message.error ? <div className="message-error" role="alert">{message.error}</div> : null}
+                  {message.error ?<div className="message-error" role="alert">{message.error}</div> : null}
                   {message.status === "stopped" ? <div className="message-state">Generation stopped</div> : null}
                   {message.role === "assistant" && message.debug ? <MessageDebugBubble debug={message.debug} /> : null}
                   {message.role === "assistant" && message.status !== "streaming" ? (
@@ -948,7 +983,7 @@ export function ChatPage() {
               onClick={() => fileInputRef.current?.click()}
               disabled={running || preparing || processingFiles}
               aria-label="Choose files"
-              title="Attach PDF, Markdown, JSON, text, log, CSV, DOCX, or PPTX"
+              title="Attach PDF, Markdown, JSON, text, log, CSV, DOCX, or PPTX to read. To make a PPTX into a template, use Template Studio"
             >
               {processingFiles ? <LoaderCircle className="spin" size={18} /> : <Paperclip size={18} />}
             </button>
