@@ -26,6 +26,13 @@ describe("version tag", () => {
     expect(document.querySelector("time")).toHaveAttribute("datetime", "2026-11-12T10:54:08.000Z");
   });
 
+  it("names the npm packages in use and links each version on npm", () => {
+    state.version = { version: "1.0.0", commit: "abc1234", libraries: [{ name: "llm-large-files", version: "0.5.0" }] };
+    render(<AppVersionTag />);
+    expect(screen.getByRole("link", { name: "llm-large-files 0.5.0" })).toHaveAttribute("href", "https://www.npmjs.com/package/llm-large-files/v/0.5.0");
+    expect(document.querySelector(".version-tag")).toHaveAttribute("title", "Gemini Prep 1.0.0 · commit abc1234 · running locally · llm-large-files 0.5.0");
+  });
+
   it("shows a local run's commit without a link or a date", () => {
     state.version = { version: "1.0.0", commit: "abc1234-dirty" };
     render(<AppVersionTag />);

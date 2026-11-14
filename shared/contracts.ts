@@ -255,6 +255,13 @@ export type ProviderConfig = {
   models: ModelOption[];
 };
 
+/** An npm package the server runs, named in the footer under the app's own version. */
+export type LibraryVersion = {
+  name: string;
+  /** The installed version, from the package's own package.json. */
+  version: string;
+};
+
 /** What the server runs: its package version and, when known, the commit and when it was deployed. */
 export type AppVersion = {
   version: string;
@@ -264,6 +271,11 @@ export type AppVersion = {
   commitUrl?: string;
   /** ISO time of the deploy, from APP_DEPLOYED_AT. Absent for local runs. */
   deployedAt?: string;
+  /**
+   * The npm packages in use that the footer names: llm-large-files, while LARGE_FILES_ENGINE is
+   * "npm". Absent when there is none to name, and from older servers.
+   */
+  libraries?: LibraryVersion[];
 };
 
 export type PublicConfig = {
