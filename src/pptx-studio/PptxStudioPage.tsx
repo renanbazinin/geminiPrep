@@ -70,6 +70,7 @@ function TemplateCard({ template, inChat, onUse, onDelete }: {
       <div className="studio-card-foot">
         <div className="studio-badges">
           {template.builtIn ? <span className="studio-badge">Shipped with the app</span> : null}
+          {!template.builtIn && template.patterns > 0 && !template.published ? <span className="studio-badge studio-badge-warn">Not published</span> : null}
           {template.errors > 0 ? <span className="studio-badge studio-badge-bad"><AlertTriangle size={12} /> {template.errors} to fix</span> : null}
           {template.errors === 0 && template.warnings > 0 ? <span className="studio-badge studio-badge-warn">{template.warnings} to check</span> : null}
         </div>
@@ -77,8 +78,8 @@ function TemplateCard({ template, inChat, onUse, onDelete }: {
           {inChat ? (
             <span className="studio-in-chat"><Check size={14} /> Used in chat</span>
           ) : (
-            <button type="button" className="secondary-button" onClick={onUse} disabled={template.patterns === 0}
-              title={template.patterns === 0 ? "Give it layouts first" : "The chat's presentation tools will use this template"}>
+            <button type="button" className="secondary-button" onClick={onUse} disabled={!template.published}
+              title={template.patterns === 0 ? "Give it layouts first" : !template.published ? "Publish it first" : "The chat's presentation tools will use this template"}>
               <MessageSquare size={14} /> Use in chat
             </button>
           )}
@@ -118,9 +119,9 @@ function TemplateListView() {
   useEffect(reload, [reload]);
 
   const inChat = list
-    ? (list.templates.some((template) => template.id === settings.presentationTemplate && template.patterns > 0)
+    ? (list.templates.some((template) => template.id === settings.presentationTemplate && template.published)
       ? settings.presentationTemplate
-      : list.templates.some((template) => template.id === list.defaultTemplate) ? list.defaultTemplate : list.templates.find((template) => template.patterns > 0)?.id)
+      : list.templates.some((template) => template.id === list.defaultTemplate) ? list.defaultTemplate : list.templates.find((template) => template.published)?.id)
     : undefined;
 
   async function upload() {
@@ -187,9 +188,9 @@ function TemplateListView() {
           <div>
             <h2>Put a .pptx in the studio</h2>
             <p>
-              A deck of sample slides. With a manifest it is ready to use. Without one, {chatModelFor(settings)} drafts
-              the layouts, one call per slide, from the measured shapes of each slide — positions, sizes, fonts,
-              sample text — and no picture of a slide.
+              A deck of sample slides. Upload it, then press Prepare: {chatModelFor(settings)} drafts the layouts once,
+              one call per slide, from the measured shapes of each slide and no picture of it, and the studio settles
+              the rest by itself. You read a short summary, look at the sample, and publish.
             </p>
           </div>
         </div>

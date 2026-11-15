@@ -66,16 +66,17 @@ export async function duplicateTemplate(id: string, name: string): Promise<Prese
 }
 
 /**
- * Has a model draft the template's manifest: which slides are layouts and what each shape is
- * for. The server reports each slide as it is done.
+ * Prepares a template in one step. One without layouts is drafted by a model first (which slides
+ * are layouts and what each shape is for; the server reports each slide as it is done), then
+ * settled without a model. One with layouts is only settled. The result carries a short summary.
  */
-export async function draftTemplate(
+export async function prepareTemplate(
   id: string,
   choice: StudioModelChoice,
   onProgress: (progress: DraftProgress) => void,
   signal?: AbortSignal,
 ): Promise<PresentationTemplateDetail> {
-  const response = await fetch(`${API}/templates/${encodeURIComponent(id)}/draft`, post(choice, signal));
+  const response = await fetch(`${API}/templates/${encodeURIComponent(id)}/prepare`, post(choice, signal));
   if (!response.ok) throw new Error(await responseError(response));
   if (!response.body) throw new Error("The server returned an empty stream.");
   const reader = response.body.getReader();
@@ -97,7 +98,7 @@ export async function draftTemplate(
           const parsed = JSON.parse(data) as Record<string, unknown>;
           if (event === "progress") onProgress(parsed as DraftProgress);
           if (event === "result") result = parsed as unknown as PresentationTemplateDetail;
-          if (event === "error") throw new Error(typeof parsed.message === "string" ? parsed.message : "The draft failed.");
+          if (event === "error") throw new Error(typeof parsed.message === "string" ? parsed.message : "The preparation failed.");
         }
         boundary = buffer.indexOf("\n\n");
       }
@@ -107,9 +108,14 @@ export async function draftTemplate(
     await reader.cancel().catch(() => undefined);
     reader.releaseLock();
   }
-  if (!result) throw new Error("The draft ended before it was finished.");
+  if (!result) throw new Error("The preparation ended before it was finished.");
   layoutCache.delete(id);
   return result;
+}
+
+/** Lets the chat use a template. Refused while it is not fit to use, with the reason. */
+export async function publishTemplate(id: string): Promise<PresentationTemplateDetail> {
+  return json(await fetch(`${API}/templates/${encodeURIComponent(id)}/publish`, post({})));
 }
 
 export async function changeTemplate(id: string, changes: ManifestChange[]): Promise<ManifestChangeOutcome> {

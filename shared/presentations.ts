@@ -23,6 +23,12 @@ export type PresentationTemplateSummary = {
   /** Name of the uploaded file. */
   sourceName?: string;
   bytes: number;
+  /**
+   * Whether the chat may use it. A template is published by a person, after preparing it and
+   * looking at the summary and the sample. Templates that had layouts before publishing existed are
+   * published.
+   */
+  published: boolean;
 };
 
 /** A text that is the same on every slide of a deck, such as the line beside the logo. */
@@ -43,6 +49,25 @@ export type PresentationTemplateDetail = PresentationTemplateSummary & {
   fields: PresentationDeckField[];
   /** The model that drafted the manifest. */
   draftedWith?: string;
+  /** What the last preparation did and left for a person. */
+  prepared?: PreparedSummary;
+};
+
+/** The summary of a preparation: what a person reads before publishing, instead of lists. */
+export type PreparedSummary = {
+  at: string;
+  /** Fit to use when it was prepared: no error, and the sample renders at the fewest and the most items. */
+  sound: boolean;
+  /** How many things it did by itself. */
+  done: number;
+  /** The few sentences only a person can settle. */
+  left: string[];
+  /** Layouts it added (mirrored and text-only variants). */
+  added: string[];
+  /** Layouts it took out because they cannot be used. */
+  removed: string[];
+  /** Icon slots that keep the template's own pictogram because there is no icon set. */
+  kept: Array<{ pattern: string; slot: string; was: "error" | "remove" }>;
 };
 
 /** One shape of a layout, for drawing the layout small. Boxes are fractions of the slide. */

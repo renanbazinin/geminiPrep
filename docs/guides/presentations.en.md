@@ -1,7 +1,7 @@
 # Presentations and PPTX Studio
 
 Gemini Prep makes PowerPoint decks with the [`slotdeck`](https://www.npmjs.com/package/slotdeck)
-package (0.2.0). A template is an ordinary .pptx of sample slides. slotdeck clones those slides and
+package (0.3.1). A template is an ordinary .pptx of sample slides. slotdeck clones those slides and
 fills the shapes marked as slots, so logo, backgrounds, fonts and decorations are never redrawn. A
 model decides what goes on each slide; the code does the drawing.
 
@@ -50,14 +50,34 @@ slide.
 
 ## PPTX Studio
 
-### Put a template in
+### Put a template in: upload, prepare, look, publish
 
-Choose a .pptx of sample slides, and its manifest if it has one (the `manifest.json` that says
-which slides are layouts and which shapes are slots). With a manifest the template is ready. Without
-one, **draft** it: the model picked in the chat gets one call about the deck and one per slide. It
-reads the shapes as measured from the file — id, kind, position, size, font size, sample text — and
-answers whether the slide is a reusable layout and what each shape is for. **No picture of a slide
-is sent to the model.** Slides it leaves out are listed with the reason.
+1. **Upload** a .pptx of sample slides, and its manifest if it has one (the `manifest.json` that
+   says which slides are layouts and which shapes are slots). It is kept as a new template that is
+   **not published**: the chat does not use it yet.
+2. **Prepare** it, one button. A template without layouts is drafted once: the model picked in
+   the chat gets one call about the deck and one per slide. It reads the shapes as measured from
+   the file — id, kind, position, size, font size, sample text — and answers whether the slide is a
+   reusable layout and what each shape is for. **No picture of a slide is sent to the model.** Then
+   slotdeck's `prepareManifest` settles the rest without a model: rows that can take more cards,
+   pictograms as icons, mirrored and text-only versions of a layout, text budgets, and anything that
+   has one answer. A layout that cannot be used is taken out and named.
+3. **Look** at the summary that comes back instead of lists of suggestions and issues: how many
+   layouts, how many variants were added, how many things were settled, and the few sentences only
+   a person can decide (the text that repeats on every slide, whether text was measured, a reminder
+   to read the descriptions). Download the sample deck with the fewest and with the most cards:
+   every slot is filled to its limit, so text that overflows there overflows in real decks.
+4. **Publish.** The studio checks the template again at that moment and refuses, with the reason,
+   while it has an error or its sample does not render. Then the chat may use it, and **Use in
+   chat** picks it.
+
+A template is drafted only once. **Prepare again** on a template that has layouts calls no model:
+it settles it once more and keeps every layout presentations were made with. To start over, upload
+the file again. Templates that had layouts before publishing existed stay published. A duplicate is
+a new template: publish it to use it.
+
+Everything else on the page — layouts and slots, changing in words, deck fields, the manifest — is
+for looking closer. None of it is needed before publishing.
 
 ### Layouts and slots
 
@@ -179,7 +199,7 @@ Nothing removes old decks. A deck with photos is a few megabytes; clear
 
 Settings are the `PRESENTATIONS_*` variables in `.env.example`.
 
-## What of slotdeck 0.2.0 is not used
+## What of slotdeck 0.3.1 is not used
 
 - **Text measured with the template's fonts** (`fontkitMetrics`, `measuredBudgets`, shrinking text
   to fit). It needs the font files of each template on the server, which a Cloud Run image does not
@@ -199,6 +219,13 @@ Settings are the `PRESENTATIONS_*` variables in `.env.example`.
 | Tools on Auto hand the turn over (Generate Content) | not run | worked, for the plan and for the approval |
 | Draft a 13-slide template (14 calls, text only) | worked, all 13 slides became layouts | not run |
 | Change a manifest by instruction | not run | worked |
+
+15 November 2026, with slotdeck 0.3.1, in Chrome on Windows (Gemini API, `gemini-3.8-flash`):
+
+| Check | Result |
+|---|---|
+| Upload the demo .pptx, prepare it (14 calls, text only), publish, use in chat | worked in about 30 seconds: 21 layouts, 8 of them added variants, 10 things settled, three sentences left, fit to use |
+| Change by instruction, deck field, manifest tab, prepare again (no model) | worked; preparing again made no model call |
 
 14 November 2026, with slotdeck 0.2.0, in Chromium on Windows:
 

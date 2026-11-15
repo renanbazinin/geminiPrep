@@ -194,3 +194,14 @@ textarea.studio-input { resize: vertical; line-height: 1.45; }
   .studio-slides { flex-direction: row; max-height: none; overflow-x: auto; padding: 0 0 6px; }
   .studio-slide-button { flex: 0 0 132px; }
 }
+
+/* The summary of a preparation: what a person reads before publishing. */
+.studio-prepared { margin-top: 18px; padding: 16px 18px; border: 1px solid #2f5d48; border-radius: 14px; background: #121c18; display: grid; gap: 12px; }
+.studio-prepared-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+.studio-prepared-head h2 { margin: 0 0 6px; font: 600 1.05rem "Manrope", sans-serif; }
+.studio-prepared-numbers { margin: 0; display: flex; flex-wrap: wrap; gap: 6px 16px; color: var(--muted); font-size: 0.8rem; }
+.studio-prepared-numbers b { color: var(--text, #f2f2f2); font-size: 0.95rem; margin-right: 3px; }
+.studio-prepared-left { margin: 0; padding-left: 20px; display: grid; gap: 6px; font-size: 0.82rem; line-height: 1.5; }
+.studio-prepared-samples { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; color: var(--muted); font-size: 0.78rem; }
+.studio-prepared-samples span { flex-basis: 100%; }
+.studio-closer { margin: 18px 0 0; color: var(--muted); font-size: 0.78rem; }
