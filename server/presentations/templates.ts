@@ -23,6 +23,7 @@ import {
   type PresentationDeckField,
   type PresentationTemplateDetail,
   type PresentationTemplateSummary,
+  type PreparedSummary,
   type TemplateLayouts,
 } from "../../shared/presentations.js";
 import { resolvePresentationSettings } from "./config.js";
@@ -39,7 +40,19 @@ export type TemplateMeta = {
   /** Values for the template's deck fields. A field without one gets the template's sample text. */
   fields?: Record<string, string>;
   draftedWith?: string;
+  /**
+   * Whether the chat may use the template. Unset on templates from before publishing existed:
+   * those with layouts stay in use.
+   */
+  published?: boolean;
+  /** What the last preparation did and left for a person. */
+  prepared?: PreparedSummary;
 };
+
+/** Whether the chat may use a template: it has layouts, and nobody kept it back from publishing. */
+export function isPublished(stored: StoredTemplate): boolean {
+  return stored.template.manifest.patterns.length > 0 && (stored.builtIn || stored.meta.published !== false);
+}
 
 export type StoredTemplate = {
   id: string;
@@ -157,13 +170,16 @@ export class TemplateLibrary {
     return folder ? this.open(folder) : undefined;
   }
 
-  /** The template with this id; failing that the default one; failing that the first that can make a deck. */
+  /**
+   * The template with this id; failing that the default one; failing that the first that can make
+   * a deck. Only a published template is used: one that is being prepared is not.
+   */
   async resolve(id: string | undefined): Promise<StoredTemplate | undefined> {
     const wanted = id ? await this.get(id) : undefined;
-    if (wanted && wanted.template.manifest.patterns.length > 0) return wanted;
+    if (wanted && isPublished(wanted)) return wanted;
     const fallback = await this.get(resolvePresentationSettings().defaultTemplate);
-    if (fallback && fallback.template.manifest.patterns.length > 0) return fallback;
-    return (await this.list()).find((candidate) => candidate.template.manifest.patterns.length > 0);
+    if (fallback && isPublished(fallback)) return fallback;
+    return (await this.list()).find(isPublished);
   }
 
   private async editable(id: string): Promise<StoredTemplate> {
@@ -192,7 +208,7 @@ export class TemplateLibrary {
     await mkdir(directory, { recursive: true });
     await writeFile(path.join(directory, PPTX_FILE), input.bytes);
     await writeFile(path.join(directory, MANIFEST_FILE), JSON.stringify(emptyManifest(name), null, 2));
-    const meta: TemplateMeta = { name, createdAt: now, updatedAt: now, ...(input.sourceName ? { sourceName: input.sourceName } : {}) };
+    const meta: TemplateMeta = { name, createdAt: now, updatedAt: now, published: false, ...(input.sourceName ? { sourceName: input.sourceName } : {}) };
     await writeFile(path.join(directory, META_FILE), JSON.stringify(meta, null, 2));
     return (await this.get(id)) as StoredTemplate;
   }
@@ -215,6 +231,7 @@ export class TemplateLibrary {
       createdAt: now,
       updatedAt: now,
       sourceName: source.meta.sourceName ?? `${displayName(source)} (${source.builtIn ? "shipped with the app" : "copy"})`,
+      published: false,
     };
     await writeFile(path.join(directory, META_FILE), JSON.stringify(meta, null, 2));
     return (await this.get(copyId)) as StoredTemplate;
@@ -356,6 +373,7 @@ export class TemplateLibrary {
       ...(stored.meta.updatedAt ? { updatedAt: stored.meta.updatedAt } : {}),
       ...(stored.meta.sourceName ? { sourceName: stored.meta.sourceName } : {}),
       bytes: stored.bytes,
+      published: isPublished(stored),
     };
   }
 
@@ -369,6 +387,7 @@ export class TemplateLibrary {
       skipped: stored.meta.skipped ?? [],
       fields: deckFields(stored, view),
       ...(stored.meta.draftedWith ? { draftedWith: stored.meta.draftedWith } : {}),
+      ...(stored.meta.prepared ? { prepared: stored.meta.prepared } : {}),
     };
   }
 

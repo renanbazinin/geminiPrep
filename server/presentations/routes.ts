@@ -4,22 +4,26 @@
 import express, { type ErrorRequestHandler, type NextFunction, type Request, type Response } from "express";
 import {
   changeManifest,
+  checkManifest,
   draftManifest,
   editManifest,
   patternVariants,
+  prepareManifest,
   renderDeck,
   sampleDeck,
   storeKeys,
   type DeckSpec,
   type ManifestChange,
+  type PreparedManifest,
+  type Template,
 } from "slotdeck";
 import type { ProviderId } from "../../shared/contracts.js";
-import type { DraftProgress, ManifestChangeOutcome, StudioModelChoice } from "../../shared/presentations.js";
+import type { DraftProgress, ManifestChangeOutcome, PreparedSummary, StudioModelChoice } from "../../shared/presentations.js";
 import { resolveGeminiChatModels, resolveVertexChatModels, resolveVertexProject } from "../catalog.js";
 import { resolvePresentationSettings } from "./config.js";
 import { presentationModels } from "./models.js";
 import { SlidePictures, type Picture } from "./previews.js";
-import { TemplateError, displayName, type StoredTemplate, type TemplateLibrary } from "./templates.js";
+import { TemplateError, displayName, isPublished, type StoredTemplate, type TemplateLibrary } from "./templates.js";
 
 const PPTX_TYPE = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
 const MAX_CHANGES = 60;
@@ -66,6 +70,37 @@ function param(req: Request, name: string): string {
   return typeof value === "string" ? value : "";
 }
 
+/**
+ * Whether a manifest is fit to use: no error against its pptx, and its sample renders with the
+ * fewest and the most items of every row. Worked out on the manifest as it is now, every time.
+ */
+export function fitToUse(template: Template, issues = checkManifest(template)): { fit: boolean; reason?: string } {
+  const error = issues.find((issue) => issue.severity === "error");
+  if (error) return { fit: false, reason: `${[error.pattern, error.slot].filter(Boolean).join(".") || "The manifest"} ${error.message}` };
+  if (template.manifest.patterns.length === 0) return { fit: false, reason: "The template has no layouts yet." };
+  try {
+    for (const items of ["min", "max"] as const) {
+      const { deck, assets } = sampleDeck(template, { items });
+      renderDeck(template, deck, { assets, layout: "adaptive" });
+    }
+    return { fit: true };
+  } catch (error) {
+    return { fit: false, reason: `The sample deck does not render: ${error instanceof Error ? error.message : String(error)}` };
+  }
+}
+
+function summaryOf(prepared: PreparedManifest): PreparedSummary {
+  return {
+    at: new Date().toISOString(),
+    sound: prepared.sound,
+    done: prepared.done.length,
+    left: prepared.left,
+    added: prepared.added,
+    removed: prepared.removed,
+    kept: prepared.kept,
+  };
+}
+
 function attach(res: Response, filename: string): void {
   const ascii = filename.replace(/[^\x20-\x7e]/g, "_").replace(/["\\]/g, "_");
   res.setHeader("Content-Disposition", `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(filename)}`);
@@ -91,6 +126,8 @@ export function presentationRoutes(options: {
 }) {
   const { library } = options;
   const pictures = options.pictures ?? new SlidePictures();
+  /** Templates being prepared now. A second start for one of them is refused: a draft runs once. */
+  const preparing = new Set<string>();
   const router = express.Router();
   const json = express.json({ limit: "2mb" });
   const run = (handler: (req: Request, res: Response) => Promise<void>) => (req: Request, res: Response, next: NextFunction) => {
@@ -145,14 +182,21 @@ export function presentationRoutes(options: {
   }));
 
   /**
-   * Drafts the manifest with a model: one call about the deck, then one per slide. The model
-   * gets the measured shapes of each slide and no picture of it. Progress and the result are
-   * sent as server-sent events, because a large template takes a minute or two.
+   * Prepares a template in one step, which is what an upload leads to. A template without layouts
+   * is drafted with a model once (one call about the deck, then one per slide, with the measured
+   * shapes and no picture of a slide), then settled by slotdeck without a model: the suggestions
+   * that are facts of the slides are taken, issues that have one answer are solved, and a short
+   * summary is left for a person. A template that has layouts is never drafted again: only the
+   * second half runs, and nothing a stored deck depends on is taken away. Nothing is published
+   * here; a person publishes after reading the summary. Progress and the result are sent as
+   * server-sent events, because a large template takes a minute or two.
    */
-  router.post("/templates/:id/draft", json, run(async (req, res) => {
+  const prepare = run(async (req, res) => {
     const stored = changeable(await found(param(req, "id")));
-    const choice = modelChoice(req.body);
-    const { llm, model } = models(choice);
+    const drafting = stored.template.manifest.patterns.length === 0;
+    const choice = drafting ? modelChoice(req.body) : undefined;
+    if (preparing.has(stored.id)) throw new TemplateError(409, "This template is being prepared already.");
+    preparing.add(stored.id);
     const abort = new AbortController();
     res.on("close", () => abort.abort());
     res.status(200).set({ "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-cache, no-transform", Connection: "keep-alive" });
@@ -161,20 +205,59 @@ export function presentationRoutes(options: {
       if (!abort.signal.aborted && !res.writableEnded) res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
     };
     try {
-      const total = library.inspect(stored).slides.length;
-      send("progress", { done: 0, total, slide: 0 } satisfies DraftProgress);
-      const draft = await draftManifest(stored.template.pkg, {
-        llm,
-        name: displayName(stored),
-        onProgress: (event) => send("progress", event satisfies DraftProgress),
-        signal: abort.signal,
+      let manifest = stored.template.manifest;
+      const patch: { skipped?: Array<{ slide: number; reason: string }>; draftedWith?: string } = {};
+      if (choice) {
+        const { llm, model } = models(choice);
+        const total = library.inspect(stored).slides.length;
+        send("progress", { done: 0, total, slide: 0 } satisfies DraftProgress);
+        const draft = await draftManifest(stored.template.pkg, {
+          llm,
+          name: displayName(stored),
+          onProgress: (event) => send("progress", event satisfies DraftProgress),
+          signal: abort.signal,
+        });
+        if (draft.manifest.patterns.length === 0) throw new TemplateError(422, "No slide of this file could be made a layout.");
+        manifest = draft.manifest;
+        Object.assign(patch, { skipped: draft.skipped, draftedWith: model });
+      }
+      if (abort.signal.aborted) return;
+      const icons = (await library.icons(stored)).length > 0;
+      const prepared = prepareManifest({ ...stored.template, manifest }, {
+        icons,
+        // The chat plans with the adaptive layout (chat.ts), where an optional slot may be left out.
+        layout: "adaptive",
+        // A template in use keeps every layout stored decks were made with.
+        remove: drafting,
+        fields: stored.meta.fields ?? {},
       });
-      const saved = await library.saveManifest(stored.id, draft.manifest, { skipped: draft.skipped, draftedWith: model });
+      // A manifest in use is replaced only by one that is no worse.
+      const before = drafting ? { fit: false } : fitToUse(stored.template);
+      const keep = drafting || prepared.sound || !before.fit;
+      const saved = keep
+        ? await library.saveManifest(stored.id, prepared.manifest, { ...patch, prepared: summaryOf(prepared) })
+        : await library.saveMeta(stored.id, { prepared: summaryOf(prepared) });
       send("result", library.detail(saved));
     } catch (error) {
       if (!abort.signal.aborted) send("error", { message: error instanceof Error ? error.message : String(error) });
+    } finally {
+      preparing.delete(stored.id);
+      res.end();
     }
-    res.end();
+  });
+  router.post("/templates/:id/prepare", json, prepare);
+  // The old name of the same operation: it drafts a template only once.
+  router.post("/templates/:id/draft", json, prepare);
+
+  /**
+   * Lets the chat use a template. It is refused for a manifest that is not fit to use, worked out
+   * again on the manifest as it is now: a summary from earlier says nothing about later changes.
+   */
+  router.post("/templates/:id/publish", json, run(async (req, res) => {
+    const stored = changeable(await found(param(req, "id")));
+    const check = fitToUse(stored.template, library.issues(stored));
+    if (!check.fit) throw new TemplateError(409, `It cannot be published yet. ${check.reason}`);
+    res.json(library.detail(isPublished(stored) ? stored : await library.saveMeta(stored.id, { published: true })));
   }));
 
   /** Changes made by hand in the studio. Each is checked against the pptx; what cannot work is refused. */

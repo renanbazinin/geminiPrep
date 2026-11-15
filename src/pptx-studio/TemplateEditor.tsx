@@ -11,6 +11,7 @@ import {
   LoaderCircle,
   MessageSquare,
   Presentation,
+  Rocket,
   Sparkles,
   Trash2,
   Wand2,
@@ -24,6 +25,7 @@ import type {
   ManifestChange,
   ManifestChangeOutcome,
   PatternLayoutShape,
+  PreparedSummary,
   PresentationTemplateDetail,
   VariantOption,
 } from "../../shared/presentations";
@@ -34,12 +36,13 @@ import { useApp } from "../contexts/AppContext";
 import {
   changeTemplate,
   deleteTemplate,
-  draftTemplate,
   duplicateTemplate,
   fetchPatternVariants,
   fetchTemplate,
   fetchTemplates,
   instructTemplate,
+  prepareTemplate,
+  publishTemplate,
   replaceTemplatePptx,
   saveTemplateFields,
   saveTemplateManifest,
@@ -523,6 +526,51 @@ function ManifestPanel({ detail, readOnly, busy, onSave, onReplace }: {
   );
 }
 
+/**
+ * What a person reads after preparing a template, in place of lists of suggestions and issues:
+ * a few numbers, the sentences only a person can settle, the sample to look at, and publishing.
+ */
+function PreparedCard({ detail, summary, busy, onPublish }: {
+  detail: PresentationTemplateDetail;
+  summary: PreparedSummary;
+  busy: boolean;
+  onPublish(): void;
+}) {
+  const fit = detail.errors === 0 && summary.sound;
+  return (
+    <section className="studio-prepared" aria-label="Prepared">
+      <div className="studio-prepared-head">
+        <div>
+          <h2>{detail.published ? "Published" : fit ? "Ready to look at" : "Needs a look before publishing"}</h2>
+          <p className="studio-prepared-numbers">
+            <span><b>{detail.patterns}</b> layouts</span>
+            {summary.added.length ? <span><b>{summary.added.length}</b> of them variants added</span> : null}
+            {detail.skipped.length ? <span><b>{detail.skipped.length}</b> slides left out</span> : null}
+            <span><b>{summary.done}</b> things settled by themselves</span>
+            {summary.kept.length ? <span><b>{summary.kept.length}</b> pictograms kept as designed</span> : null}
+          </p>
+        </div>
+        {detail.published ? (
+          <span className="studio-in-chat"><Check size={14} /> The chat can use it</span>
+        ) : (
+          <button type="button" className="primary-button" disabled={busy || !fit} onClick={onPublish}
+            title={fit ? "Let the chat make decks with this template" : "Fix what the summary says first"}>
+            <Rocket size={15} /> Publish
+          </button>
+        )}
+      </div>
+      <ol className="studio-prepared-left">
+        {summary.left.map((sentence, index) => <li key={index} dir="auto">{sentence}</li>)}
+      </ol>
+      <div className="studio-prepared-samples">
+        <span>Look at the sample before publishing. Every slot is filled to its limit, so text that overflows here will overflow in real decks:</span>
+        <a className="secondary-button" href={templateFileUrl(detail.id, "sample.pptx", "?items=min")} download><Download size={14} /> Sample, fewest cards</a>
+        <a className="secondary-button" href={templateFileUrl(detail.id, "sample.pptx", "?items=max")} download><Download size={14} /> Sample, most cards</a>
+      </div>
+    </section>
+  );
+}
+
 export function TemplateEditor({ id }: { id: string }) {
   const { settings, updateSettings } = useApp();
   const navigate = useNavigate();
@@ -542,7 +590,6 @@ export function TemplateEditor({ id }: { id: string }) {
   const [instruction, setInstruction] = useState("");
   const [newPatternId, setNewPatternId] = useState("");
   const [fieldDraft, setFieldDraft] = useState<Record<string, string>>({});
-  const [redraftArmed, setRedraftArmed] = useState(false);
   const [deleteArmed, setDeleteArmed] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   useEffect(() => () => abortRef.current?.abort(), []);
@@ -602,15 +649,23 @@ export function TemplateEditor({ id }: { id: string }) {
 
   const apply = (changes: ManifestChange[]) => void act("Saving…", async () => record(await changeTemplate(id, changes)));
 
-  function draft() {
-    setRedraftArmed(false);
-    void act("Drafting layouts…", async () => {
+  function prepare() {
+    const drafting = detail?.patterns === 0;
+    void act(drafting ? "Preparing the template…" : "Preparing again…", async () => {
       const controller = new AbortController();
       abortRef.current = controller;
-      const drafted = await draftTemplate(id, choice, setProgress, controller.signal);
-      setDetail(drafted);
+      const prepared = await prepareTemplate(id, choice, setProgress, controller.signal);
+      setDetail(prepared);
       setShapeId(null);
-      setLog([{ ok: true, text: `${drafted.patterns} of ${drafted.slides} slides became layouts${drafted.skipped.length ? `; ${drafted.skipped.length} were left out` : ""}.` }]);
+      setLog([]);
+    });
+  }
+
+  function publish() {
+    void act("Publishing…", async () => {
+      const published = await publishTemplate(id);
+      setDetail(published);
+      setLog([{ ok: true, text: "Published. The chat can make decks with this template now." }]);
     });
   }
 
@@ -654,7 +709,7 @@ export function TemplateEditor({ id }: { id: string }) {
       <Link className="studio-back" to={STUDIO_PATH}><ArrowLeft size={15} /> PPTX Studio</Link>
       <header className="studio-editor-head">
         <div>
-          <p className="eyebrow">{detail.builtIn ? "SHIPPED WITH THE APP · READ-ONLY" : "TEMPLATE"}</p>
+          <p className="eyebrow">{detail.builtIn ? "SHIPPED WITH THE APP · READ-ONLY" : detail.published ? "TEMPLATE · PUBLISHED" : "TEMPLATE · NOT PUBLISHED YET"}</p>
           <h1 dir="auto">{detail.name}</h1>
           <p className="studio-card-meta">
             {detail.slides} slides · {detail.patterns} {detail.patterns === 1 ? "layout" : "layouts"}
@@ -666,7 +721,8 @@ export function TemplateEditor({ id }: { id: string }) {
           {inChat ? (
             <span className="studio-in-chat"><Check size={14} /> Used in chat</span>
           ) : (
-            <button type="button" className="secondary-button" disabled={detail.patterns === 0} onClick={() => updateSettings({ presentationTemplate: detail.id })}>
+            <button type="button" className="secondary-button" disabled={!detail.published} onClick={() => updateSettings({ presentationTemplate: detail.id })}
+              title={detail.published ? "The chat's presentation tools will use this template" : "Publish it first"}>
               <MessageSquare size={14} /> Use in chat
             </button>
           )}
@@ -703,19 +759,39 @@ export function TemplateEditor({ id }: { id: string }) {
       {error ? <div className="panel-error" role="alert"><span>{error}</span><button onClick={() => setError(null)}>Dismiss</button></div> : null}
       {readOnly ? <p className="studio-note">This template ships with the app, so it cannot be changed here. Duplicate it to work on a copy.</p> : null}
 
+      {detail.prepared && detail.patterns > 0 && !readOnly ? (
+        <PreparedCard detail={detail} summary={detail.prepared} busy={working} onPublish={publish} />
+      ) : null}
+      {!detail.prepared && !detail.published && detail.patterns > 0 && !readOnly ? (
+        <section className="studio-prepared" aria-label="Publish">
+          <div className="studio-prepared-head">
+            <div>
+              <h2>Not published yet</h2>
+              <p className="studio-prepared-numbers"><span>The chat uses a template only once it is published.</span></p>
+            </div>
+            <button type="button" className="primary-button" disabled={working || detail.errors > 0} onClick={publish}><Rocket size={15} /> Publish</button>
+          </div>
+        </section>
+      ) : null}
+      {detail.patterns > 0 && !readOnly ? (
+        <p className="studio-closer">Everything below is for looking closer. None of it is needed before publishing.</p>
+      ) : null}
+
       {!readOnly ? (
         <section className="studio-ai" aria-label="Model actions">
           {detail.patterns === 0 ? (
             <div className="studio-draft-call">
               <div>
-                <h2>Draft the layouts</h2>
+                <h2>Prepare the template</h2>
                 <p>
-                  {model} decides, slide by slide, whether it is a reusable layout and what each shape is for. It reads
-                  the shapes as measured from the file — no pictures of the slides are sent. {detail.slides + 1} calls.
+                  One step. {model} decides, slide by slide, whether it is a reusable layout and what each shape is for,
+                  from the shapes as measured in the file — no pictures of the slides are sent ({detail.slides + 1} calls).
+                  Then the studio settles the rest by itself: rows that can take more cards, pictograms, mirrored and
+                  text-only versions, text budgets. You get a short summary and a sample deck, and publish.
                 </p>
               </div>
-              <button type="button" className="primary-button" disabled={working} onClick={draft}>
-                {busy === "Drafting layouts…" ? <LoaderCircle className="spin" size={15} /> : <Sparkles size={15} />} Draft with {model}
+              <button type="button" className="primary-button" disabled={working} onClick={prepare}>
+                {busy === "Preparing the template…" ? <LoaderCircle className="spin" size={15} /> : <Sparkles size={15} />} Prepare with {model}
               </button>
             </div>
           ) : (
@@ -737,14 +813,9 @@ export function TemplateEditor({ id }: { id: string }) {
                 <button type="submit" className="primary-button" disabled={working || !instruction.trim()}>
                   {busy === "Working out the change…" ? <LoaderCircle className="spin" size={15} /> : <Wand2 size={15} />} Apply
                 </button>
-                <button
-                  type="button"
-                  className={redraftArmed ? "danger-button" : "text-button"}
-                  disabled={working}
-                  onBlur={() => setRedraftArmed(false)}
-                  onClick={() => (redraftArmed ? draft() : setRedraftArmed(true))}
-                >
-                  {redraftArmed ? "Replace every layout with a new draft?" : "Draft again from the .pptx"}
+                <button type="button" className="text-button" disabled={working} onClick={prepare}
+                  title="Settles the layouts again without a model, and keeps every layout presentations were made with. A template is never drafted twice: to start over, upload the file again.">
+                  Prepare again (no model)
                 </button>
               </div>
             </form>

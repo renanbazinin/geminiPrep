@@ -1,5 +1,5 @@
 // @ts-nocheck -- Fetch doubles intentionally implement only the behavior under test.
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import request from "supertest";
@@ -88,6 +88,31 @@ function events(text) {
     event: block.split("\n").find((line) => line.startsWith("event:"))?.slice(6).trim(),
     data: JSON.parse(block.split("\n").find((line) => line.startsWith("data:")).slice(5)),
   }));
+}
+
+/** Uploads the demo pptx as a new template, with no layouts yet. */
+async function uploadDemo(app, name) {
+  const uploaded = await request(app).post("/api/presentations/templates")
+    .set("Content-Type", "application/octet-stream")
+    .set("X-Template-Name", encodeURIComponent(name))
+    .send(await readFile(DEMO_PPTX));
+  expect(uploaded.status).toBe(201);
+  return uploaded.body;
+}
+
+/** A scripted draft: slide 12 is a section divider, slide 3 a text beside a photo, every other slide is left out. */
+function scriptedDraft() {
+  return gemini({
+    answer: (body) => {
+      const properties = body.response_format.schema.properties;
+      if (properties.fields) return { language: "en", fields: [] };
+      const shapes = properties.shapes.items.properties.shape.enum;
+      if (body.input.startsWith("Slide 12 of 13")) {
+        return { usable: true, reason: "a divider", id: "Section Break", description: "Opens a new part of the deck.", figures: false, shapes: shapes.map((shape, index) => ({ shape, role: index === 0 ? "title" : "text", name: index === 0 ? "title" : `line${index}`, optional: index > 0 })) };
+      }
+      return { usable: false, reason: "not a layout", id: "", description: "", figures: false, shapes: [] };
+    },
+  });
 }
 
 function chatBody(extra = {}) {
@@ -198,11 +223,12 @@ describe("PPTX Studio API", () => {
     expect(uploaded.status).toBe(422);
     const copy = await request(app).post("/api/presentations/templates/demo/duplicate").send({ name: "Demo copy" });
     expect(copy.status).toBe(201);
-    const drafted = await request(app).post(`/api/presentations/templates/${copy.body.id}/draft`).send({ provider: "gemini", model: "not-a-model" });
-    expect(drafted.status).toBe(400);
+    const fresh = await uploadDemo(app, "Fresh");
+    const prepared = await request(app).post(`/api/presentations/templates/${fresh.id}/prepare`).send({ provider: "gemini", model: "not-a-model" });
+    expect(prepared.status).toBe(400);
   });
 
-  it("drafts a manifest from the measured shapes alone: no picture of a slide reaches the model", async () => {
+  it("prepares an upload in one step: one draft from the measured shapes alone, then settled without a model", async () => {
     const model = gemini({
       answer: (body) => {
         const properties = body.response_format.schema.properties;
@@ -221,15 +247,20 @@ describe("PPTX Studio API", () => {
       },
     });
     const app = createApp({ presentations: library, fetchImpl: model.fetchImpl });
-    const copy = await request(app).post("/api/presentations/templates/demo/duplicate").send({ name: "Draft me" });
-    const drafted = await request(app).post(`/api/presentations/templates/${copy.body.id}/draft`).send({ provider: "gemini", model: MODEL });
+    const uploaded = await uploadDemo(app, "Draft me");
+    const drafted = await request(app).post(`/api/presentations/templates/${uploaded.id}/prepare`).send({ provider: "gemini", model: MODEL });
     expect(drafted.status).toBe(200);
     const stream = events(drafted.text);
     expect(stream.filter((entry) => entry.event === "progress").at(-1).data).toMatchObject({ done: 13, total: 13 });
     const result = stream.find((entry) => entry.event === "result").data;
-    expect(result.manifest.patterns.map((pattern) => pattern.id)).toEqual(["section-break"]);
+    expect(result.manifest.patterns.map((pattern) => pattern.id)).toContain("section-break");
     expect(result.skipped).toHaveLength(12);
     expect(result.draftedWith).toBe(MODEL);
+    // A summary to read, not lists: a few sentences, and whether it may be published.
+    expect(result.prepared).toMatchObject({ sound: true, removed: [] });
+    expect(result.prepared.left.at(-1)).toMatch(/^Read the description of each layout once/);
+    expect(result).not.toHaveProperty("suggestions");
+    expect(result.published).toBe(false);
 
     // One call about the deck and one per slide, each of them text only.
     expect(model.calls.interactions).toHaveLength(14);
@@ -376,6 +407,66 @@ describe("PPTX Studio API", () => {
   });
 });
 
+describe("PPTX Studio: prepare and publish", () => {
+  it("leads an upload through prepare to publish, and the chat uses the template only once it is published", async () => {
+    const model = scriptedDraft();
+    const app = createApp({ presentations: library, fetchImpl: model.fetchImpl });
+    const uploaded = await uploadDemo(app, "Upload");
+    expect(uploaded.published).toBe(false);
+    const prepared = events((await request(app).post(`/api/presentations/templates/${uploaded.id}/prepare`).send({ provider: "gemini", model: MODEL })).text)
+      .find((entry) => entry.event === "result").data;
+    expect(prepared.patterns).toBeGreaterThan(0);
+    expect(prepared.published).toBe(false);
+    // Not published: the chat does not take it, even when the browser names it.
+    expect((await library.resolve(uploaded.id)).id).toBe("demo");
+
+    const published = await request(app).post(`/api/presentations/templates/${uploaded.id}/publish`).send({});
+    expect(published.status).toBe(200);
+    expect(published.body.published).toBe(true);
+    expect((await library.resolve(uploaded.id)).id).toBe(uploaded.id);
+    const listed = await request(app).get("/api/presentations/templates");
+    expect(listed.body.templates.find((template) => template.id === uploaded.id)).toMatchObject({ published: true });
+  });
+
+  it("never drafts a template twice: preparing one that has layouts calls no model and loses no name", async () => {
+    const model = scriptedDraft();
+    const app = createApp({ presentations: library, fetchImpl: model.fetchImpl });
+    const copy = (await request(app).post("/api/presentations/templates/demo/duplicate").send({ name: "In use" })).body;
+    const names = (manifest) => manifest.patterns.flatMap((pattern) => [pattern.id, ...pattern.slots.map((slot) => `${pattern.id}.${slot.name}`)]);
+    for (const route of ["prepare", "draft"]) {
+      const response = await request(app).post(`/api/presentations/templates/${copy.id}/${route}`).send({ provider: "gemini", model: MODEL });
+      const result = events(response.text).find((entry) => entry.event === "result").data;
+      expect(names(result.manifest)).toEqual(expect.arrayContaining(names(copy.manifest)));
+      expect(result.prepared.removed).toEqual([]);
+    }
+    expect(model.calls.interactions).toHaveLength(0);
+    // A second run settles nothing more.
+    const again = events((await request(app).post(`/api/presentations/templates/${copy.id}/prepare`).send({})).text).find((entry) => entry.event === "result").data;
+    expect(again.prepared.done).toBe(0);
+  });
+
+  it("refuses to publish a manifest that is not fit to use, worked out again at publish", async () => {
+    const app = createApp({ presentations: library });
+    const copy = (await request(app).post("/api/presentations/templates/demo/duplicate").send({ name: "Broken" })).body;
+    const manifest = structuredClone(copy.manifest);
+    manifest.patterns[0].slots.push({ name: "gone", kind: "text", shapeId: "9999", maxChars: 10 });
+    expect((await request(app).put(`/api/presentations/templates/${copy.id}/manifest`).send(manifest)).status).toBe(200);
+    const refused = await request(app).post(`/api/presentations/templates/${copy.id}/publish`).send({});
+    expect(refused.status).toBe(409);
+    expect(refused.body.error).toMatch(/cannot be published yet.*shape #9999/);
+    expect((await library.resolve(copy.id)).id).toBe("demo");
+  });
+
+  it("keeps templates the chat used before publishing existed in use", async () => {
+    const copy = await library.duplicate("demo", "Old one");
+    // A template from before: its notes say nothing about publishing.
+    const { published: _published, ...older } = copy.meta;
+    await writeFile(path.join(copy.directory, "meta.json"), JSON.stringify(older));
+    expect((await library.resolve(copy.id)).id).toBe(copy.id);
+    expect(library.summary(await library.get(copy.id)).published).toBe(true);
+  });
+});
+
 describe("presentation tools in the chat", () => {
   it("plans a deck, then creates it from the plan the note names, and serves the file", async () => {
     const planning = gemini({
@@ -472,7 +563,7 @@ describe("presentation tools in the chat", () => {
       chat: [[{ functionCall: { name: TOOL_NAMES.plan, args: { topic: "City bikes", slide_count: 2 } } }], [{ text: "Planned." }]],
       json: [OUTLINE],
     });
-    const copy = await library.duplicate("demo", "Second");
+    const copy = await library.saveMeta((await library.duplicate("demo", "Second")).id, { published: true });
     const planned = await request(createApp({ presentations: library, fetchImpl: planning.fetchImpl })).post("/api/chat/stream")
       .send(chatBody({ presentationTemplate: copy.id }));
     const plan = events(planned.text).find((entry) => entry.event === "presentation").data;
