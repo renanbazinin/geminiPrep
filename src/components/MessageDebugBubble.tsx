@@ -8,6 +8,7 @@ import {
   DatabaseZap,
   Radio,
 } from "lucide-react";
+import type { UsageTotals } from "llm-large-files";
 import { useMemo, useState } from "react";
 import type { ChatMessageDebug } from "../../shared/contracts";
 import { compactDebugValue } from "../../shared/debug";
@@ -37,7 +38,46 @@ function recordFrom(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
-export function MessageDebugBubble({ debug }: { debug: ChatMessageDebug }) {
+/**
+ * The requests and tokens of a whole question on large files: every model request, the
+ * explorer's and the whole-file reads' among them, in all and for each model.
+ */
+function LargeFileUsage({ usage }: { usage: UsageTotals }) {
+  const models = Object.entries(usage.byModel ?? {});
+  // One model: its own row. Several: the totals, then each model.
+  const rows: Array<[string, Omit<UsageTotals, "byModel" | "thoughtTokens">]> = models.length === 1
+    ? [[models[0][0], usage]]
+    : [["All models", usage], ...models];
+  return (
+    <section className="debug-section">
+      <div className="debug-section-title">
+        <DatabaseZap size={14} />
+        <strong>Large files · whole question</strong>
+        <span>every request, whole-file reads included</span>
+      </div>
+      <div className="debug-usage-scroll">
+        <table className="debug-usage-table">
+          <thead>
+            <tr><th scope="col">Model</th><th scope="col">Requests</th><th scope="col">Input tokens</th><th scope="col">Cached</th><th scope="col">Output tokens</th></tr>
+          </thead>
+          <tbody>
+            {rows.map(([model, totals]) => (
+              <tr key={model}>
+                <th scope="row">{model}</th>
+                <td>{totals.requests.toLocaleString()}</td>
+                <td>{totals.inputTokens.toLocaleString()}</td>
+                <td>{totals.cachedInputTokens.toLocaleString()}</td>
+                <td>{totals.outputTokens.toLocaleString()}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+export function MessageDebugBubble({ debug, largeFileUsage }: { debug: ChatMessageDebug; largeFileUsage?: UsageTotals }) {
   const [copied, setCopied] = useState(false);
   const duration = debug.timing.clientDurationMs ?? debug.response.done?.durationMs;
   const firstToken = debug.timing.clientTimeToFirstDeltaMs ?? debug.response.done?.timeToFirstTokenMs;
@@ -104,6 +144,8 @@ export function MessageDebugBubble({ debug }: { debug: ChatMessageDebug }) {
           <div><span>Total tokens</span><strong>{totalTokens?.toLocaleString() ?? "—"}</strong></div>
           <div><span>Cached tokens</span><strong>{cachedTokens > 0 ? cachedTokens.toLocaleString() : "—"}</strong></div>
         </div>
+
+        {largeFileUsage ? <LargeFileUsage usage={largeFileUsage} /> : null}
 
         <section className="debug-section">
           <div className="debug-section-title"><Braces size={14} /><strong>Request</strong><span>browser → server → provider</span></div>

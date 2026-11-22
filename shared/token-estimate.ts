@@ -1,7 +1,7 @@
 // The app's own token estimate, for the browser and the server. It is the estimator of
-// llm-large-files 0.5.0 (src/text.ts), copied here because the package's entry point imports Node
-// modules and cannot be loaded in the browser. The browser needs the same number the server will
-// work with: a file it keeps is one the server would have sent in full too.
+// llm-large-files 0.7.0 (src/text.ts, the same since 0.5.0), copied here because the package's
+// entry point imports Node modules and cannot be loaded in the browser. The browser needs the same
+// number the server will work with: a file it keeps is one the server would have sent in full too.
 // shared/token-estimate.test.ts fails when the two stop agreeing, for example after a new version
 // of the package changes its estimator. Copy the new one here then.
 

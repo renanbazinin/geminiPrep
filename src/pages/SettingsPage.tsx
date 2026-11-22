@@ -1,12 +1,13 @@
-import { AlertTriangle, CheckCircle2, Cloud, Database, KeyRound, RotateCcw, SlidersHorizontal } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Cloud, Database, FileStack, KeyRound, RotateCcw, SlidersHorizontal } from "lucide-react";
 import { useEffect, useState } from "react";
-import type { ProviderId, StoredCacheEntry, ThinkingLevel } from "../../shared/contracts";
+import type { LargeFilesConfig, LargeFilesOverrides, ProviderId, StoredCacheEntry, ThinkingLevel } from "../../shared/contracts";
 import { useApp } from "../contexts/AppContext";
 import { useConfig } from "../contexts/ConfigContext";
 import { forgetCache, formatRemaining, loadCaches, remainingMs } from "../lib/cache-registry";
 import { InteractionSettings } from "../components/InteractionSettings";
 import { usesInteractions } from "../../shared/interactions";
 import { GEMINI_4_MIN_OUTPUT_TOKENS, PRO_MODEL, PRO_MODEL_LABEL, gemini4RegionProblem } from "../../shared/gemini-4";
+import { largeFilesBounds } from "../lib/large-files-limits";
 
 export function SettingsPage() {
   const { settings, updateSettings, resetSettings, storageError } = useApp();
@@ -274,7 +275,125 @@ export function SettingsPage() {
           <CacheRegistryPanel />
         </div>
       </section> : null}
+
+      {config?.largeFiles ? <LargeFilesSettings limits={config.largeFiles} /> : null}
     </div>
+  );
+}
+
+type LargeFilesField = keyof LargeFilesOverrides;
+
+const formatMb = (bytes: number) => `${Number((bytes / 1024 / 1024).toFixed(1)).toLocaleString()} MB`;
+
+function LargeFilesSettings({ limits }: { limits: LargeFilesConfig }) {
+  const { settings, updateSettings } = useApp();
+  const overrides = settings.largeFiles ?? {};
+  const bounds = largeFilesBounds(limits);
+  const npm = limits.engine === "npm";
+  const customized = Object.values(overrides).some((value) => typeof value === "number");
+
+  function set(field: LargeFilesField, value: number | null) {
+    updateSettings({ largeFiles: { ...overrides, [field]: value } });
+  }
+
+  /**
+   * Empty is the server's value. A number is capped at the maximum while typing, and raised to the
+   * minimum when the field is left, so typing "2000" into a field whose minimum is 1,000 still works.
+   * A value saved above what this server now allows stays saved (the server may raise its limit
+   * again) and is shown with the limit that applies instead.
+   */
+  function numberInput(field: LargeFilesField, step: number, round: (value: number) => number, unit: string) {
+    const { min, max, server } = bounds[field];
+    const value = overrides[field];
+    const aboveMax = typeof value === "number" && value > max;
+    return (
+      <>
+        <input
+          type="number"
+          min={min}
+          max={max}
+          step={step}
+          value={value ?? ""}
+          placeholder={`Server default: ${server.toLocaleString()}`}
+          onChange={(event) => {
+            if (event.target.value === "") return set(field, null);
+            const next = Number(event.target.value);
+            if (Number.isFinite(next)) set(field, Math.min(max, Math.max(0, round(next))));
+          }}
+          onBlur={() => {
+            if (typeof value === "number" && value < min) set(field, min);
+          }}
+        />
+        {aboveMax ? (
+          <small className="provider-warning">
+            This server allows at most {max.toLocaleString()} {unit}, so it uses {max.toLocaleString()} instead of your {value.toLocaleString()}.
+          </small>
+        ) : null}
+      </>
+    );
+  }
+
+  return (
+    <section className="settings-section">
+      <div className="settings-section-title">
+        <FileStack size={19} />
+        <div>
+          <h2>Large files</h2>
+          <p>Choose which attachments go to the server, and when the model searches a file instead of reading all of it.</p>
+        </div>
+      </div>
+      <div className="settings-grid">
+        <label className="form-field">
+          <span>Upload text, DOCX and PPTX above (KB)</span>
+          {numberInput("serverThresholdKb", 1, Math.round, "KB")}
+          <small>
+            Smaller files stay in this browser and are sent with each question. From {bounds.serverThresholdKb.min.toLocaleString()} to
+            {" "}{bounds.serverThresholdKb.max.toLocaleString()} KB.
+          </small>
+        </label>
+
+        <label className="form-field">
+          <span>Upload PDFs above (MB)</span>
+          {numberInput("pdfInlineMaxMb", 0.1, (value) => Math.round(value * 10) / 10, "MB")}
+          <small>
+            Smaller PDFs are sent whole, so Gemini sees their layout and pictures. Up to {bounds.pdfInlineMaxMb.max.toLocaleString()} MB,
+            the most this server leaves room for in a request.
+          </small>
+        </label>
+
+        <label className="form-field">
+          <span>Search files above (tokens)</span>
+          {numberInput("inlineTokens", 1000, Math.round, "tokens")}
+          <small>
+            This browser uploads each file with more text than this. On the server, files are read in full, smallest first,
+            while their text together stays under this amount and fits the model's context; the rest are searched with tools.
+            From {bounds.inlineTokens.min.toLocaleString()} to {bounds.inlineTokens.max.toLocaleString()} tokens.
+          </small>
+        </label>
+
+        <div className="form-field form-field-static">
+          <span>Server limits</span>
+          <strong>{formatMb(limits.maxUploadBytes)} per file · kept {limits.ttlHours.toLocaleString()} hours</strong>
+          <small>
+            Engine: {limits.engine === "npm" ? "llm-large-files (npm)" : limits.engine === "original" ? "original" : "not reported by this server"}.
+            Set on the server; uploaded files are deleted after this time.
+          </small>
+        </div>
+
+        <p className="form-field form-field-wide settings-help">
+          Empty fields use the server's values.{" "}
+          {npm
+            ? "A lower token threshold is also sent with each question, and the server plans with it. The server counts tokens again on the text it prepares, so a file uploaded for its length is usually searched there too. Files already attached stay where they are (in this browser or on the server), but the token threshold applies at each question to every file on the server, including ones you attached earlier."
+            : `This server's engine plans with its own token threshold (${limits.inlineTokens.toLocaleString()}); a lower value here uploads more files, but the server may still send them whole. Files already attached keep the routing they were given; new thresholds apply to files you attach next.`}
+        </p>
+
+        <div className="form-field-wide">
+          <button className="secondary-button" disabled={!customized} onClick={() => updateSettings({ largeFiles: undefined })}>
+            <RotateCcw size={16} /> Use server defaults
+          </button>
+        </div>
+      </div>
+    </section>
   );
 }
 

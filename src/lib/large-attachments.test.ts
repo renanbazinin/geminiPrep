@@ -3,7 +3,11 @@ import JSZip from "jszip";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AppSettings, ChatMessage, LargeFilesConfig } from "../../shared/contracts";
 import { DEFAULT_INTERACTIONS } from "../../shared/interactions";
-import { attachmentKind, attachmentToRequestPart, deleteAttachmentPayloads, goesToServer, processAttachment, textGoesToServer } from "./attachments";
+import type { UploadProgress } from "./api";
+import {
+  attachmentKind, attachmentToRequestPart, deleteAttachmentPayloads, describeUploadProgress, goesToServer, processAttachment, textGoesToServer,
+} from "./attachments";
+import { effectiveLargeFilesLimits } from "./large-files-limits";
 import { selectInteractionHistory } from "./interaction-history";
 
 const limits: LargeFilesConfig = {
@@ -148,6 +152,52 @@ describe("large attachment routing", () => {
     Object.defineProperty(file, "size", { value: 60 * 1024 * 1024 });
     await expect(processAttachment(file, { largeFiles: limits })).rejects.toThrow("huge.log is larger than the 50 MB upload limit.");
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("reports the server's progress and keeps how it read the file (npm engine)", async () => {
+    const events = [
+      { type: "ingest.start", name: "notes.csv", format: "csv", bytes: 5_000 },
+      { type: "ingest.progress", stage: "decode", done: 5_000, total: 5_000, unit: "bytes" },
+      { type: "ingest.finish", document: {
+        id: `doc_${"d".repeat(32)}`, name: "notes.csv", mimeType: "text/csv", format: "csv", bytes: 5_000, lines: 40,
+        estimatedTokens: 2_000, expiresAt: "2026-12-01T00:00:00.000Z", encoding: "windows-1255", replacedCharacters: 3,
+      } },
+    ];
+    const fetchMock = vi.fn(async () => new Response(events.map((event, index) => `data: ${JSON.stringify({ ...event, seq: index + 1 })}\n\n`).join(""), {
+      status: 200, headers: { "Content-Type": "text/event-stream" },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    const file = new File(["x".repeat(2_000)], "notes.csv", { type: "text/csv" });
+    const progress: UploadProgress[] = [];
+    const controller = new AbortController();
+    const attachment = await processAttachment(file, { largeFiles: limits, signal: controller.signal, onProgress: (event) => progress.push(event) });
+    expect(progress).toEqual([{ stage: "decode", done: 5_000, total: 5_000, unit: "bytes" }]);
+    expect((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].signal).toBe(controller.signal);
+    expect(attachment.document).toEqual({
+      id: `doc_${"d".repeat(32)}`, format: "csv", lines: 40, estimatedTokens: 2_000, expiresAt: "2026-12-01T00:00:00.000Z",
+      encoding: "windows-1255", replacedCharacters: 3,
+    });
+  });
+
+  it("routes by the user's own thresholds within the server's", () => {
+    const server: LargeFilesConfig = { ...limits, serverThresholdBytes: 512 * 1024 };
+    const lowered = effectiveLargeFilesLimits(server, { serverThresholdKb: 100, pdfInlineMaxMb: 2 });
+    expect(goesToServer({ size: 200 * 1024 }, "text", server)).toBe(false);
+    expect(goesToServer({ size: 200 * 1024 }, "text", lowered)).toBe(true);
+    expect(goesToServer({ size: 3 * 1024 * 1024 }, "pdf", lowered)).toBe(true);
+    // Never above what the server sends in full.
+    expect(effectiveLargeFilesLimits(server, { inlineTokens: 900_000 }).inlineTokens).toBe(200_000);
+  });
+
+  it("says in plain English how far the server is", () => {
+    expect(describeUploadProgress({ stage: "extract", done: 120, total: 400, unit: "pages" })).toBe("reading pages 120 of 400");
+    expect(describeUploadProgress({ stage: "extract", done: 2, total: 5, unit: "parts" })).toBe("reading parts 2 of 5");
+    expect(describeUploadProgress({ stage: "check", done: 1_200, total: 4_000, unit: "pages" })).toBe("checking pages 1,200 of 4,000");
+    expect(describeUploadProgress({ stage: "pictures", done: 3, unit: "pages" })).toBe("checking pictures on pages 3");
+    expect(describeUploadProgress({ stage: "prepare", done: 450, total: 1_000, unit: "characters" })).toBe("preparing the text (45%)");
+    expect(describeUploadProgress({ stage: "index", done: 1_000, total: 1_000, unit: "characters" })).toBe("indexing the lines");
+    expect(describeUploadProgress({ stage: "decode", done: 10, total: 10, unit: "bytes" })).toBe("decoding the text");
+    expect(describeUploadProgress({ stage: "store", done: 2, total: 3, unit: "parts" })).toBe("saving part 2 of 3");
   });
 
   it("deletes server copies when attachments are discarded", async () => {

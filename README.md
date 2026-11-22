@@ -54,7 +54,18 @@ the server decides whether an uploaded file fits the model's limits (by default 
 text, within 10 MB per request and a 1M-token context) and sends it in full, or gives Gemini
 a summary card plus tools to search, read line ranges, or read the whole file in parts. The steps
 Gemini took appear under its answer. Limits are set with the `LARGE_FILES_*` variables in
-`.env.example`.
+`.env.example`, among them the limits of reading one upload: `LARGE_FILES_MAX_TEXT_MB`,
+`LARGE_FILES_MAX_PDF_PAGES`, `LARGE_FILES_INGEST_TIMEOUT_S` (0: no limit),
+`LARGE_FILES_PDF_PICTURES` and `LARGE_FILES_PDF_CHECK_PAGES` (npm engine; unset, the package's
+defaults apply).
+
+In **Settings → Large files** each user can set their own thresholds: the size above which text,
+DOCX and PPTX go to the server (no higher than 20 MB or the upload limit), and, no higher than the
+server's, the PDF size and the tokens above which a file is searched. With the npm engine a lower
+token threshold is sent with each question and the server plans with it too; the original engine
+keeps the server's value. With the npm engine the chat also shows each tool call as it runs (a
+whole-file read with its progress, retries, what it showed), and an upload shows how far the
+server has read the file.
 
 **Pictures in large PDFs.** The text of a PDF does not hold its pictures. With the npm engine the
 server keeps each uploaded PDF next to its text until it expires, marks the pages that show a
@@ -88,8 +99,9 @@ package by default. `LARGE_FILES_ENGINE` picks the implementation:
 | `npm` (default) | The published package: its library, its `askGemini` tool loop, and its upload handlers |
 | `original` | The in-repo copy in [`packages/large-files`](packages/large-files/README.md) and this app's own tool loop |
 
-Both engines store files the same way and stream the same events to the browser, so switching
-only needs a server restart. The startup log names the engine in use.
+Both engines store files the same way and stream the same events to the browser (the npm engine
+sends the package's typed events beside them), so switching only needs a server restart. The
+startup log names the engine in use.
 
 **Presentations.** The chat makes PowerPoint decks with the
 [`slotdeck`](https://www.npmjs.com/package/slotdeck) npm package: it clones the slides of a template

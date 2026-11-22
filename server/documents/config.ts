@@ -2,9 +2,11 @@ import { readdir, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import {
   createLargeFiles as createPackageLargeFiles,
+  createPdfExtractor,
   FileDocumentStore as PackageFileDocumentStore,
   resolveBudget as resolvePackageBudget,
   type LargeFiles as PackageLargeFiles,
+  type LargeFilesOptions as PackageLargeFilesOptions,
 } from "llm-large-files";
 import type { GeminiToolFilePlacement } from "llm-large-files/gemini";
 import type { LargeFilesConfig } from "../../shared/contracts.js";
@@ -35,6 +37,14 @@ function positive(name: string, fallback: number): number {
   if (!raw?.trim()) return fallback;
   const value = Number(raw);
   return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+/** A setting that may be 0. Unset, or not a number of 0 or more: undefined. */
+function nonNegative(name: string): number | undefined {
+  const raw = process.env[name];
+  if (!raw?.trim()) return undefined;
+  const value = Number(raw);
+  return Number.isFinite(value) && value >= 0 ? value : undefined;
 }
 
 /** A yes/no setting. Unset keeps the fallback; "0", "false", "off" and "no" turn it off. */
@@ -100,6 +110,38 @@ export function resolveLargeFilesSettings() {
   };
 }
 
+/**
+ * The limits of one upload on the npm engine (llm-large-files 0.6.0 and later), from the
+ * environment. Each one unset, or not a number above 0 (of 0 or more for the time limit), is left
+ * to the library's default:
+ * - LARGE_FILES_MAX_TEXT_MB (`maxTextBytes`): the most text kept from one file. 100 MB, or the
+ *   upload limit when that is larger: a DOCX often holds 2 to 4 times its size in text.
+ * - LARGE_FILES_MAX_PDF_PAGES (`maxPdfPages`): a PDF with more pages is refused before any is read. 5,000.
+ * - LARGE_FILES_INGEST_TIMEOUT_S (`ingestTimeoutMs`): the most time reading one file may take. 120 s; exactly 0 sets no limit, and
+ *   any other time is at least 1 ms.
+ * - LARGE_FILES_PDF_PICTURES and LARGE_FILES_PDF_CHECK_PAGES (`createPdfExtractor`): both on. Off,
+ *   pages with pictures get no line saying so, and PDFs are not checked for pages that would hold
+ *   the server for long before they are read.
+ * The original engine has none of these.
+ */
+export function packageIngestOptions(): Pick<PackageLargeFilesOptions, "maxTextBytes" | "maxPdfPages" | "ingestTimeoutMs" | "extractors"> {
+  const maxTextMb = nonNegative("LARGE_FILES_MAX_TEXT_MB");
+  const maxPdfPages = nonNegative("LARGE_FILES_MAX_PDF_PAGES");
+  const ingestTimeoutSeconds = nonNegative("LARGE_FILES_INGEST_TIMEOUT_S");
+  const pictures = enabled("LARGE_FILES_PDF_PICTURES", true);
+  const checkPages = enabled("LARGE_FILES_PDF_CHECK_PAGES", true);
+  return {
+    ...(maxTextMb ? { maxTextBytes: Math.max(1, Math.round(maxTextMb * MB)) } : {}),
+    ...(maxPdfPages ? { maxPdfPages: Math.max(1, Math.round(maxPdfPages)) } : {}),
+    // Only exactly 0 is no limit: a smaller time than half a millisecond is 1 ms, not 0.
+    ...(ingestTimeoutSeconds === undefined ? {} : {
+      ingestTimeoutMs: ingestTimeoutSeconds === 0 ? 0 : Math.max(1, Math.round(ingestTimeoutSeconds * 1000)),
+    }),
+    // The library's own PDF extractor, unless one of its checks is turned off.
+    ...(pictures && checkPages ? {} : { extractors: { pdf: createPdfExtractor({ pictures, checkPages }) } }),
+  };
+}
+
 const BUDGET_SETTINGS = {
   contextTokens: "LARGE_FILES_CONTEXT_TOKENS",
   maxRequestBytes: "LARGE_FILES_MAX_REQUEST_BYTES",
@@ -109,9 +151,10 @@ const BUDGET_SETTINGS = {
 } as const;
 
 /**
- * The budget fields that are set in the environment, and no others. llm-large-files 0.5.0 works
- * out what is left open from the context window, so LARGE_FILES_CONTEXT_TOKENS alone is enough for
- * a smaller model. Given all five, a small window next to the default part size is a startup error.
+ * The budget fields that are set in the environment, and no others. llm-large-files (since 0.5.0)
+ * works out what is left open from the context window, so LARGE_FILES_CONTEXT_TOKENS alone is
+ * enough for a smaller model. Given all five, a small window next to the default part size is a
+ * startup error.
  */
 export function environmentBudget(): Partial<typeof DEFAULT_BUDGET> {
   const budget: Partial<typeof DEFAULT_BUDGET> = {};
@@ -137,6 +180,7 @@ export function publicLargeFilesConfig(): LargeFilesConfig {
     inlineTokens: resolveInlineTokens(),
     pdfInlineMaxBytes: settings.pdfInlineMaxBytes,
     ttlHours: settings.ttlHours,
+    engine: resolveLargeFilesEngine(),
   };
 }
 
@@ -152,7 +196,13 @@ export function createServerLargeFiles(engine: LargeFilesEngine = resolveLargeFi
     budget: settings.budget,
   };
   return engine === "npm"
-    ? { engine, files: createPackageLargeFiles({ ...options, budget: environmentBudget(), store: new PackageFileDocumentStore(settings.directory), keepOriginals: settings.keepPdfs ? ["pdf"] : [] }) }
+    ? { engine, files: createPackageLargeFiles({
+      ...options,
+      ...packageIngestOptions(),
+      budget: environmentBudget(),
+      store: new PackageFileDocumentStore(settings.directory),
+      keepOriginals: settings.keepPdfs ? ["pdf"] : [],
+    }) }
     : { engine, files: createOriginalLargeFiles({ ...options, store: new OriginalFileDocumentStore(settings.directory) }) };
 }
 
