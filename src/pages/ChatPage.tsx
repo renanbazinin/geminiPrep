@@ -28,16 +28,20 @@ import type {
   ChatGeneratedImage,
   ChatPresentationCard,
   ChatStreamErrorData,
+  ChatStreamEvent,
   ChatStreamRequest,
   ChatToolId,
+  LargeFilesEvent,
 } from "../../shared/contracts";
 import { IMAGE_MODEL_ID, IMAGE_MODEL_REGION, contentWithPresentationNotes } from "../../shared/chat-tools";
 import { compactDebugValue } from "../../shared/debug";
+import { EMPTY_LARGE_FILES_RUN, LargeFilesActivity, applyLargeFilesEvent } from "../components/LargeFilesActivity";
 import { MarkdownMessage } from "../components/MarkdownMessage";
 import { MessageDebugBubble } from "../components/MessageDebugBubble";
 import { PresentationCards } from "../components/PresentationCards";
 import { useApp } from "../contexts/AppContext";
 import { useConfig } from "../contexts/ConfigContext";
+import type { UploadProgress } from "../lib/api";
 import { streamChatWithRecovery } from "../lib/interaction-recovery";
 import {
   ATTACHMENT_ACCEPT,
@@ -46,9 +50,11 @@ import {
   attachmentKind,
   attachmentToRequestPart,
   deleteAttachmentPayloads,
+  describeUploadProgress,
   goesToServer,
   processAttachment,
 } from "../lib/attachments";
+import { effectiveLargeFilesLimits, requestInlineTokens } from "../lib/large-files-limits";
 import {
   deleteGeneratedImages,
   generatedImageFilename,
@@ -68,6 +74,21 @@ const SUGGESTIONS: Array<{ text: string; tool?: ChatToolId }> = [
   { text: "Help me design a safe model rollout checklist for an enterprise chatbot." },
   { text: "Make a 6-slide presentation that compares Gemini Flash and Pro for a customer-support assistant.", tool: "presentation" },
 ];
+
+/** What the server does with an uploaded file, without counts: what a screen reader is told. */
+const UPLOAD_STAGES: Record<UploadProgress["stage"], string> = {
+  check: "checking the file",
+  extract: "reading",
+  pictures: "checking pictures",
+  decode: "decoding the text",
+  prepare: "preparing the text",
+  index: "indexing the lines",
+  store: "saving",
+};
+
+function localBytes(attachments: ChatAttachment[]): number {
+  return attachments.filter((attachment) => !attachment.document).reduce((sum, attachment) => sum + attachment.size, 0);
+}
 
 function directionFor(text: string): "rtl" | "ltr" {
   return /[\u0590-\u08ff]/.test(text) ? "rtl" : "ltr";
@@ -113,15 +134,32 @@ function compactCount(value: number): string {
   return String(value);
 }
 
+/** How the server read a text file that was not UTF-8: "read as windows-1255 · 3 unreadable characters". */
+function encodingDetail(document: NonNullable<ChatAttachment["document"]>): string {
+  const replaced = document.replacedCharacters ?? 0;
+  return [
+    ...(document.encoding ? [`read as ${document.encoding}`] : []),
+    ...(replaced > 0 ? [`${replaced.toLocaleString()} unreadable character${replaced === 1 ? "" : "s"}`] : []),
+  ].join(" · ");
+}
+
 function attachmentDetail(attachment: ChatAttachment): string {
   const base = `${(attachment.document?.format ?? attachment.kind).toUpperCase()} · ${fileSize(attachment.size)}`;
-  if (attachment.document) return `${base} · ~${compactCount(attachment.document.estimatedTokens)} tokens · on server`;
+  if (attachment.document) {
+    const encoding = encodingDetail(attachment.document);
+    return `${base} · ~${compactCount(attachment.document.estimatedTokens)} tokens · on server${encoding ? ` · ${encoding}` : ""}`;
+  }
   return `${base}${attachment.extractedCharacters ? ` · ${attachment.extractedCharacters.toLocaleString()} chars` : ""}`;
 }
 
 function attachmentTitle(attachment: ChatAttachment): string {
   if (!attachment.document) return attachment.name;
-  return `${attachment.name}\nKept on the server until ${new Date(attachment.document.expiresAt).toLocaleString()}. When it is too large to read at once, Gemini searches and reads parts of it.`;
+  const replaced = attachment.document.replacedCharacters ?? 0;
+  const encoding = attachment.document.encoding ? `\nThe server read it as ${attachment.document.encoding}, not UTF-8.` : "";
+  const unreadable = replaced > 0
+    ? `\n${replaced.toLocaleString()} character${replaced === 1 ? "" : "s"} could not be read in that encoding and show as \uFFFD.`
+    : "";
+  return `${attachment.name}\nKept on the server until ${new Date(attachment.document.expiresAt).toLocaleString()}. When it is too large to read at once, Gemini searches and reads parts of it.${encoding}${unreadable}`;
 }
 
 function AttachmentIcon({ attachment, size = 15 }: { attachment: ChatAttachment; size?: number }) {
@@ -255,6 +293,24 @@ function composerPlaceholder(tool: ChatToolId | null, hasAttachments: boolean): 
   return "Message Gemini Prep…";
 }
 
+/**
+ * The debug events with one more of the large-file library's. A whole-file read reports progress
+ * many times, so only the latest progress of each call is kept; `text` never comes (it is `delta`).
+ */
+function withLargeFilesEvent(events: ChatStreamEvent[], event: LargeFilesEvent): ChatStreamEvent[] {
+  const entry: ChatStreamEvent = { event: "largeFiles", data: event };
+  if (event.type === "tool.progress") {
+    let index = events.length - 1;
+    while (index >= 0) {
+      const candidate = events[index];
+      if (candidate.event === "largeFiles" && candidate.data.type === "tool.progress" && candidate.data.callId === event.callId) break;
+      index -= 1;
+    }
+    if (index >= 0) return [...events.slice(0, index), ...events.slice(index + 1), entry];
+  }
+  return [...events, entry];
+}
+
 function initialDebugTrace(request: ChatStreamRequest, startedAt: string): ChatMessageDebug {
   return {
     version: 1,
@@ -339,17 +395,28 @@ export function ChatPage() {
   const [running, setRunning] = useState(false);
   const [preparing, setPreparing] = useState(false);
   const [processingFiles, setProcessingFiles] = useState(false);
+  /** The file being prepared, and how far: "report.pdf — reading pages 120 of 400…". */
+  const [fileProgress, setFileProgress] = useState<string | null>(null);
+  /**
+   * The same without counts ("report.pdf — reading"), for the live region: it changes only with the
+   * file or the stage, where the counts change many times a second.
+   */
+  const [fileStage, setFileStage] = useState<string | null>(null);
   const [pendingAttachments, setPendingAttachments] = useState<ChatAttachment[]>([]);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [cacheNotice, setCacheNotice] = useState<string | null>(null);
   const [selectedTool, setSelectedTool] = useState<ChatToolId | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const uploadAbortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const pendingAttachmentsRef = useRef<ChatAttachment[]>([]);
   const pendingConversationRef = useRef(activeConversation.id);
-  useEffect(() => () => abortRef.current?.abort(), []);
+  useEffect(() => () => {
+    abortRef.current?.abort();
+    uploadAbortRef.current?.abort();
+  }, []);
 
   const messageCount = activeConversation.messages.length;
   useEffect(() => {
@@ -383,6 +450,11 @@ export function ChatPage() {
   const proRegionProblem = settings.provider === "vertex" && !usesInteractions(settings) && isGemini4Model(activeModel)
     ? gemini4RegionProblem(settings.region)
     : null;
+  // The server's limits with the user's own thresholds (Settings) in their place.
+  const largeFilesLimits = useMemo(
+    () => (config?.largeFiles ? effectiveLargeFilesLimits(config.largeFiles, settings.largeFiles) : undefined),
+    [config?.largeFiles, settings.largeFiles],
+  );
   const canSend = (draft.trim().length > 0 || pendingAttachments.length > 0)
     && !running && !preparing && !processingFiles && !configLoading && Boolean(config);
 
@@ -395,23 +467,39 @@ export function ChatPage() {
       return;
     }
     // Only files kept in this browser count toward the inline limit; large ones go to the server.
-    const limits = config?.largeFiles;
-    const staysLocal = (file: File) => {
+    // Before reading them, only files whose fate is known count: a PDF goes by its size alone, while
+    // text, DOCX and PPTX under the threshold still go when their text is long (checked after).
+    const limits = largeFilesLimits;
+    const surelyLocal = (file: File) => {
       const kind = attachmentKind(file);
-      return !limits || !kind || !goesToServer(file, kind, limits);
+      return !limits || !kind || (kind === "pdf" && !goesToServer(file, kind, limits));
     };
-    const totalBytes = [
-      ...pendingAttachments.filter((attachment) => !attachment.document).map((attachment) => attachment.size),
-      ...files.filter(staysLocal).map((file) => file.size),
-    ].reduce((sum, size) => sum + size, 0);
-    if (totalBytes > MAX_ATTACHMENT_BYTES) {
-      setAttachmentError(`Attachments kept in this browser cannot exceed ${MAX_ATTACHMENT_BYTES / 1024 / 1024} MB combined.`);
+    const limitError = `Attachments kept in this browser cannot exceed ${MAX_ATTACHMENT_BYTES / 1024 / 1024} MB combined.`;
+    const knownBytes = localBytes(pendingAttachments) + files.filter(surelyLocal).reduce((sum, file) => sum + file.size, 0);
+    if (knownBytes > MAX_ATTACHMENT_BYTES) {
+      setAttachmentError(limitError);
       return;
     }
     setProcessingFiles(true);
     const added: ChatAttachment[] = [];
+    const controller = new AbortController();
+    uploadAbortRef.current = controller;
     try {
-      for (const file of files) added.push(await processAttachment(file, { largeFiles: limits }));
+      for (const [index, file] of files.entries()) {
+        const name = files.length > 1 ? `${file.name} (${index + 1} of ${files.length})` : file.name;
+        setFileProgress(`${name} — preparing…`);
+        setFileStage(`${name} — preparing`);
+        added.push(await processAttachment(file, {
+          largeFiles: limits,
+          signal: controller.signal,
+          onProgress(progress) {
+            setFileProgress(`${name} — ${describeUploadProgress(progress)}…`);
+            setFileStage(`${name} — ${UPLOAD_STAGES[progress.stage] ?? progress.stage}`);
+          },
+        }));
+      }
+      // Now that each file's fate is known, the files actually kept here count toward the limit.
+      if (localBytes(pendingAttachmentsRef.current) + localBytes(added) > MAX_ATTACHMENT_BYTES) throw new Error(limitError);
       const next = [...pendingAttachmentsRef.current, ...added];
       pendingAttachmentsRef.current = next;
       setPendingAttachments(next);
@@ -419,7 +507,10 @@ export function ChatPage() {
       await deleteAttachmentPayloads(added).catch(() => undefined);
       setAttachmentError(error instanceof Error ? error.message : String(error));
     } finally {
+      if (uploadAbortRef.current === controller) uploadAbortRef.current = null;
       setProcessingFiles(false);
+      setFileProgress(null);
+      setFileStage(null);
       if (fileInputRef.current) fileInputRef.current.value = "";
     }
   }
@@ -444,6 +535,7 @@ export function ChatPage() {
     let assembled = "";
     let thinkingSummary = "";
     const steps: string[] = [];
+    let largeFiles = EMPTY_LARGE_FILES_RUN;
     const sources: NonNullable<ChatMessage["sources"]> = [];
     const searchSuggestions: string[] = [];
     let generatedImages: ChatGeneratedImage[] = [];
@@ -485,6 +577,19 @@ export function ChatPage() {
             ...debug,
             response: { ...debug.response, events: [...(debug.response.events ?? []), { event: "step", data: { text } }] },
           }, { steps: [...steps] });
+        },
+        onLargeFiles(event) {
+          const next = applyLargeFilesEvent(largeFiles, event);
+          const changed = next.calls !== largeFiles.calls || next.notes !== largeFiles.notes || next.usage !== largeFiles.usage;
+          largeFiles = next;
+          updateDebug({
+            ...debug,
+            response: { ...debug.response, events: withLargeFilesEvent(debug.response.events ?? [], event) },
+          }, changed ? {
+            ...(next.calls.length ? { largeFileCalls: next.calls } : {}),
+            ...(next.notes.length ? { largeFileNotes: next.notes } : {}),
+            ...(next.usage ? { largeFileUsage: next.usage } : {}),
+          } : {});
         },
         onOpen(response) {
           updateDebug({
@@ -671,6 +776,7 @@ export function ChatPage() {
     const region = settings.provider === "vertex"
       ? (interactions ? "global" : image ? IMAGE_MODEL_REGION : settings.region)
       : undefined;
+    const inlineTokens = requestInlineTokens(config?.largeFiles, settings.largeFiles);
     return {
       ...(interactions ? {
         interactions: settings.interactions,
@@ -687,6 +793,8 @@ export function ChatPage() {
       ...(tool ? { tool } : {}),
       // Sent on every turn: with tools on Auto the model may hand any turn to the presentation tools.
       ...(!image && settings.presentationTemplate ? { presentationTemplate: settings.presentationTemplate } : {}),
+      // The user's lower token threshold, so the server plans files as this browser routed them.
+      ...(inlineTokens !== undefined ? { largeFilesInlineTokens: inlineTokens } : {}),
       messages,
     };
   }
@@ -869,7 +977,14 @@ export function ChatPage() {
                   <div className="message-content" dir={directionFor(message.content)}>
                     {message.recoveryNotice ? <p className="conversation-recovery" role="status">{message.recoveryNotice}</p> : null}
                     {message.thinkingSummary ? <details className="thinking-summary"><summary>Thinking summary</summary><p>{message.thinkingSummary}</p></details> : null}
-                    {message.steps?.length ? (
+                    {message.largeFileCalls?.length || message.largeFileNotes?.length ? (
+                      <LargeFilesActivity
+                        calls={message.largeFileCalls ?? []}
+                        {...(message.largeFileNotes ? { notes: message.largeFileNotes } : {})}
+                        {...(message.steps ? { steps: message.steps } : {})}
+                        streaming={message.status === "streaming"}
+                      />
+                    ) : message.steps?.length ? (
                       <details className="thinking-summary file-steps">
                         <summary>{message.tool === "presentation" ? "Presentation steps" : "Steps on large files"} ({message.steps.length})</summary>
                         <ol>{message.steps.map((step, index) => <li key={index}>{step}</li>)}</ol>
@@ -918,7 +1033,7 @@ export function ChatPage() {
                   {message.attachments?.length ? <MessageAttachments attachments={message.attachments} /> : null}
                   {message.error ?<div className="message-error" role="alert">{message.error}</div> : null}
                   {message.status === "stopped" ? <div className="message-state">Generation stopped</div> : null}
-                  {message.role === "assistant" && message.debug ? <MessageDebugBubble debug={message.debug} /> : null}
+                  {message.role === "assistant" && message.debug ? <MessageDebugBubble debug={message.debug} {...(message.largeFileUsage ? { largeFileUsage: message.largeFileUsage } : {})} /> : null}
                   {message.role === "assistant" && message.status !== "streaming" ? (
                     <MessageActions
                       message={message}
@@ -964,7 +1079,14 @@ export function ChatPage() {
                   <button type="button" onClick={() => removePendingAttachment(attachment)} aria-label={`Remove ${attachment.name}`}><X size={14} /></button>
                 </div>
               ))}
-              {processingFiles ? <div className="attachment-processing"><LoaderCircle size={15} />Preparing files…</div> : null}
+              {processingFiles ? (
+                <div className="attachment-processing">
+                  <LoaderCircle size={15} aria-hidden="true" />
+                  {/* Announced: the file and the stage. The counts beside it are not, as they change many times a second. */}
+                  <span className="visually-hidden" role="status">{fileStage ?? "Preparing files"}</span>
+                  <span>{fileProgress ?? "Preparing files…"}</span>
+                </div>
+              ) : null}
             </div>
           ) : null}
           <div className="composer-main">
@@ -1017,7 +1139,7 @@ export function ChatPage() {
         </form>
         <p className="composer-footnote">
           Enter to send · Tools stay on until you switch · Attach up to 10 files
-          {config?.largeFiles ? ` · Files up to ${Math.round(config.largeFiles.maxUploadBytes / 1024 / 1024)} MB; large ones are searched on the server` : " / 20 MB"}
+          {largeFilesLimits ? ` · Files up to ${Math.round(largeFilesLimits.maxUploadBytes / 1024 / 1024)} MB; large ones are searched on the server` : " / 20 MB"}
         </p>
       </div>
     </div>

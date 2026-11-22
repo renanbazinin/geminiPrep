@@ -10,10 +10,19 @@ import { resolveGeminiChatModels, resolveProbeRegions, resolveVertexChatModels }
 import { validateChatRequest } from "../chat/validation.js";
 import { createLargeFiles as createPackageLargeFiles, MemoryDocumentStore as PackageMemoryStore } from "llm-large-files";
 import { baseRequestSize, materializeDocuments } from "../chat/document-stream.js";
+import { largeFilesEventOf } from "../chat/document-stream-npm.js";
 import { createLargeFiles as createOriginalLargeFiles, MemoryDocumentStore as OriginalMemoryStore } from "../../packages/large-files/src/index.js";
 import { GEMINI_4_MIN_OUTPUT_TOKENS } from "../../shared/gemini-4.js";
 import { DEFAULT_INTERACTIONS } from "../../shared/interactions.js";
-import { createServerLargeFiles, publicLargeFilesConfig, removeOrphanOriginals, resolveInlineTokens, resolveLargeFilesEngine, resolvePagePlacement } from "./config.js";
+import {
+  createServerLargeFiles,
+  packageIngestOptions,
+  publicLargeFilesConfig,
+  removeOrphanOriginals,
+  resolveInlineTokens,
+  resolveLargeFilesEngine,
+  resolvePagePlacement,
+} from "./config.js";
 
 /** Every upload and chat test runs on both engines (LARGE_FILES_ENGINE=npm and =original). */
 const ENGINES = [
@@ -94,6 +103,73 @@ describe("large files engine flag", () => {
     vi.stubEnv("LARGE_FILES_CONTEXT_TOKENS", "128000");
     expect(resolveInlineTokens("npm")).toBe(64_000);
     expect(resolveInlineTokens("original")).toBe(200_000);
+  });
+
+  it("names the engine in /api/config, since only the npm engine plans with the user's token threshold", async () => {
+    vi.stubEnv("LARGE_FILES_ENGINE", "");
+    expect((await request(createApp({ largeFiles: ENGINES[0].create() })).get("/api/config")).body.largeFiles).toMatchObject({ engine: "npm", inlineTokens: expect.any(Number) });
+    vi.stubEnv("LARGE_FILES_ENGINE", "original");
+    expect((await request(createApp({ largeFiles: ENGINES[1].create() })).get("/api/config")).body.largeFiles.engine).toBe("original");
+  });
+
+  it("reads the limits of one upload from the environment, and leaves the package's defaults when they are unset", () => {
+    const names = ["LARGE_FILES_MAX_TEXT_MB", "LARGE_FILES_MAX_PDF_PAGES", "LARGE_FILES_INGEST_TIMEOUT_S", "LARGE_FILES_PDF_PICTURES", "LARGE_FILES_PDF_CHECK_PAGES"];
+    for (const name of names) vi.stubEnv(name, "");
+    expect(packageIngestOptions()).toEqual({});
+
+    vi.stubEnv("LARGE_FILES_MAX_TEXT_MB", "2.5");
+    vi.stubEnv("LARGE_FILES_MAX_PDF_PAGES", "300");
+    vi.stubEnv("LARGE_FILES_INGEST_TIMEOUT_S", "45");
+    expect(packageIngestOptions()).toEqual({ maxTextBytes: 2.5 * 1024 * 1024, maxPdfPages: 300, ingestTimeoutMs: 45_000 });
+    // 0 seconds is no time limit; a size or page count of 0, a negative number or a word is the default.
+    vi.stubEnv("LARGE_FILES_INGEST_TIMEOUT_S", "0");
+    vi.stubEnv("LARGE_FILES_MAX_TEXT_MB", "0");
+    vi.stubEnv("LARGE_FILES_MAX_PDF_PAGES", "lots");
+    expect(packageIngestOptions()).toEqual({ ingestTimeoutMs: 0 });
+    vi.stubEnv("LARGE_FILES_INGEST_TIMEOUT_S", "-1");
+    expect(packageIngestOptions()).toEqual({});
+    // A time limit under half a millisecond is 1 ms, not 0 (which would be no limit at all).
+    vi.stubEnv("LARGE_FILES_INGEST_TIMEOUT_S", "0.0004");
+    expect(packageIngestOptions()).toEqual({ ingestTimeoutMs: 1 });
+    vi.stubEnv("LARGE_FILES_INGEST_TIMEOUT_S", "0.0000");
+    expect(packageIngestOptions()).toEqual({ ingestTimeoutMs: 0 });
+    vi.stubEnv("LARGE_FILES_INGEST_TIMEOUT_S", "");
+
+    // The PDF checks: their own extractor only when one is turned off.
+    vi.stubEnv("LARGE_FILES_PDF_PICTURES", "1");
+    vi.stubEnv("LARGE_FILES_PDF_CHECK_PAGES", "true");
+    expect(packageIngestOptions()).toEqual({});
+    vi.stubEnv("LARGE_FILES_PDF_PICTURES", "off");
+    expect(packageIngestOptions().extractors.pdf).toBeTypeOf("function");
+    vi.stubEnv("LARGE_FILES_PDF_PICTURES", "");
+    vi.stubEnv("LARGE_FILES_PDF_CHECK_PAGES", "0");
+    expect(packageIngestOptions().extractors.pdf).toBeTypeOf("function");
+  });
+});
+
+describe("events of the npm engine as the browser gets them", () => {
+  const base = { seq: 7, runId: "run_0123456789abcdef", time: 1 };
+  const usage = { requests: 1, inputTokens: 10, cachedInputTokens: 0, outputTokens: 2, thoughtTokens: 0, byModel: {} };
+  const result = {
+    text: "Twenty.", answered: true, finishReason: "STOP", steps: ["Search app.log"], evidence: [], turns: 1, usage,
+    toolTurns: [{ calls: [], results: [{ text: "the document's lines" }] }],
+    plan: { inline: [], searchable: [] },
+    budget: { inlineTokens: 200_000 },
+    lastUsage: { totalTokenCount: 12 },
+  };
+
+  it("leaves out the answer text, tool results, tool rounds, the budget and Gemini's usage object", () => {
+    expect(largeFilesEventOf({ ...base, type: "text", requestId: "req_1", delta: "Twenty." })).toBeUndefined();
+    expect(largeFilesEventOf({ ...base, type: "tool.end", callId: "call_1", outcome: "ok", ms: 3, step: "Search app.log", result: { lines: "1-2" } }))
+      .toEqual({ ...base, type: "tool.end", callId: "call_1", outcome: "ok", ms: 3, step: "Search app.log" });
+    expect(largeFilesEventOf({ ...base, type: "run.finish", result }))
+      .toEqual({ ...base, type: "run.finish", result: { answered: true, finishReason: "STOP", steps: ["Search app.log"], evidence: [], turns: 1, usage } });
+    const error = { message: "The model was busy (HTTP 429).", kind: "rate_limit", status: 429 };
+    expect(largeFilesEventOf({ ...base, type: "run.error", error, partial: { ...result, answered: false } }))
+      .toEqual({ ...base, type: "run.error", error, partial: { steps: ["Search app.log"], evidence: [], usage } });
+    expect(largeFilesEventOf({ ...base, type: "run.error", error })).toEqual({ ...base, type: "run.error", error });
+    const notice = { ...base, type: "notice", code: "budget_reached", message: "No more tools.", display: "none" };
+    expect(largeFilesEventOf(notice)).toBe(notice);
   });
 });
 
@@ -177,7 +253,9 @@ describe.each(ENGINES)("chat with large files ($engine engine)", ({ engine, crea
     const [url, init] = fetchImpl.mock.calls[0];
     expect(url).toMatch(/\/interactions$/);
     const sent = JSON.parse(init.body);
-    expect(sent.input[0].content[0].text).toContain("--- Attached file: app.log (log, 500 lines) ---");
+    // Since llm-large-files 0.6.0 the frame of a file sent whole carries a mark that the file's own lines cannot fake.
+    if (engine === "npm") expect(sent.input[0].content[0].text).toMatch(/--- Attached file \[mark [0-9a-f]{8}\]: "app\.log" \(log, 500 lines; /);
+    else expect(sent.input[0].content[0].text).toContain("--- Attached file: app.log (log, 500 lines) ---");
     expect(sent.input[0].content[0].text).toContain("deadlock detected on table orders (tx 250)");
     expect(sent.tools).toBeUndefined();
   });
@@ -192,7 +270,8 @@ describe.each(ENGINES)("chat with large files ($engine engine)", ({ engine, crea
         return sse([{ candidates: [{ content: { role: "model", parts: [
           { text: "Let me check." },
           { functionCall: { name: "search_document", args: { document_id: meta.id, query: "deadlock", mode: "exact" } }, thoughtSignature: "sig-1" },
-        ] } }] }]);
+        // A reply without its end mark is one cut short (llm-large-files 0.6.0).
+        ] }, finishReason: "STOP" }] }]);
       }
       return sse([
         { candidates: [{ content: { role: "model", parts: [{ text: "There were 20 deadlocks (app.log L250)." }] } }] },
@@ -226,6 +305,41 @@ describe.each(ENGINES)("chat with large files ($engine engine)", ({ engine, crea
     expect(streamed.filter((event) => event.event === "step").map((event) => event.data.text)).toEqual(["Search app.log (exact) for “deadlock” — 20 matching lines"]);
     expect(streamed.filter((event) => event.event === "delta").map((event) => event.data.text).join("")).toBe("Let me check.\n\nThere were 20 deadlocks (app.log L250).");
     expect(streamed.at(-1)).toMatchObject({ event: "done", data: { finishReason: "STOP", usage: { totalTokenCount: 99 } } });
+    // The events of before are the same on both engines, in the same order.
+    expect(streamed.filter((event) => event.event !== "largeFiles").map((event) => event.event))
+      .toEqual(["meta", "activity", "delta", "activity", "step", "delta", "delta", "done"]);
+
+    // Beside them, the npm engine sends the package's own events (largeFiles); the original engine none.
+    const typed = streamed.filter((event) => event.event === "largeFiles").map((event) => event.data);
+    if (engine === "original") {
+      expect(typed).toEqual([]);
+      return;
+    }
+    const types = typed.map((event) => event.type);
+    expect(types[0]).toBe("run.start");
+    expect(types.at(-1)).toBe("run.finish");
+    expect(types).not.toContain("text");
+    // In the order they happened, one run, with the gaps the text events left in seq.
+    expect(new Set(typed.map((event) => event.runId)).size).toBe(1);
+    expect(typed.every((event, index) => index === 0 || event.seq > typed[index - 1].seq)).toBe(true);
+    expect(typed.find((event) => event.type === "plan")).toMatchObject({ inline: [], searchable: [{ id: meta.id, name: "app.log", format: "log" }] });
+    const start = types.indexOf("tool.start");
+    const end = types.indexOf("tool.end");
+    expect(start).toBeGreaterThan(types.indexOf("plan"));
+    expect(end).toBeGreaterThan(start);
+    expect(typed[start]).toMatchObject({ callId: "call_1", tool: "search_document", label: "Search app.log (exact) for “deadlock”", documentId: meta.id, round: 1 });
+    expect(typed[end]).toMatchObject({
+      callId: "call_1",
+      outcome: "ok",
+      step: "Search app.log (exact) for “deadlock” — 20 matching lines",
+      evidence: { tool: "search_document", documentId: meta.id, totalMatchingLines: 20, callId: "call_1" },
+    });
+    expect(typed[end]).not.toHaveProperty("result");
+    expect(typed.filter((event) => event.type === "request.start").map((event) => event.requestId)).toEqual(["req_1", "req_2"]);
+    // run.finish carries what the page shows: not the tool rounds (document text), the plan, the budget or Gemini's usage object.
+    const finish = typed.at(-1).result;
+    expect(Object.keys(finish).sort()).toEqual(["answered", "evidence", "finishReason", "steps", "turns", "usage"]);
+    expect(finish).toMatchObject({ answered: true, finishReason: "STOP", steps: [typed[end].step], turns: 2, usage: { requests: 2 } });
   });
 
   it("asks for an answer with no tools declared once the tool turns run out", async () => {
@@ -238,7 +352,7 @@ describe.each(ENGINES)("chat with large files ($engine engine)", ({ engine, crea
       const body = JSON.parse(init.body);
       bodies.push(body);
       if (!body.tools) return sse([{ candidates: [{ content: { parts: [{ text: "Best answer so far." }] }, finishReason: "STOP" }] }]);
-      return sse([{ candidates: [{ content: { parts: [{ functionCall: { name: "read_document", args: { document_id: meta.id, start_line: bodies.length * 10 } } }] } }] }]);
+      return sse([{ candidates: [{ content: { parts: [{ functionCall: { name: "read_document", args: { document_id: meta.id, start_line: bodies.length * 10 } } }] }, finishReason: "STOP" }] }]);
     });
     const response = await request(createApp({ fetchImpl, largeFiles })).post("/api/chat/stream").send(chatBody(meta.id));
     vi.unstubAllEnvs();
@@ -255,6 +369,42 @@ describe.each(ENGINES)("chat with large files ($engine engine)", ({ engine, crea
     expect(streamed.at(-1).event).toBe("done");
   });
 
+  it("searches a file that fits when the user's token threshold is lower, with the npm engine, and never goes above the server's", async () => {
+    const searchTools = ["search_document", "read_document", "get_document_overview", "analyze_whole_document"];
+    const ask = async (largeFiles, documentId: string, largeFilesInlineTokens: number) => {
+      const bodies = [];
+      const fetchImpl = vi.fn(async (_url, init) => {
+        bodies.push(JSON.parse(init.body));
+        return sse([{ candidates: [{ content: { parts: [{ text: "Two." }] }, finishReason: "STOP" }] }]);
+      });
+      const response = await request(createApp({ fetchImpl, largeFiles })).post("/api/chat/stream").send(chatBody(documentId, { largeFilesInlineTokens }));
+      expect(response.status).toBe(200);
+      return { first: bodies[0], streamed: events(response.text) };
+    };
+
+    // 500 lines, a few thousand tokens: the server would send them whole.
+    const fits = create();
+    const small = await fits.files.ingest({ name: "app.log", bytes: new TextEncoder().encode(log(500)) });
+    const lower = await ask(fits, small.id, 1_000);
+    if (engine === "npm") {
+      expect(lower.first.tools[0].functionDeclarations.map((tool) => tool.name)).toEqual(searchTools);
+      expect(turnText(lower.first.contents[0])).toContain("--- Large attached file: app.log ---");
+      expect(turnText(lower.first.contents[0])).not.toContain("deadlock detected on table orders (tx 250)");
+      expect(lower.streamed.find((event) => event.data?.type === "plan").data.searchable.map((document) => document.id)).toEqual([small.id]);
+    } else {
+      // The original engine plans with its own budget.
+      expect(lower.first.tools[0].functionDeclarations.map((tool) => tool.name)).not.toContain("search_document");
+      expect(turnText(lower.first.contents[0])).toContain("deadlock detected on table orders (tx 250)");
+    }
+
+    // A threshold above the server's is the server's: the file is still searched.
+    const tight = create({ budget: { inlineTokens: 1_000 } });
+    const large = await tight.files.ingest({ name: "app.log", bytes: new TextEncoder().encode(log(5_000)) });
+    const higher = await ask(tight, large.id, 500_000);
+    expect(higher.first.tools[0].functionDeclarations.map((tool) => tool.name)).toEqual(searchTools);
+    expect(turnText(higher.first.contents[0])).not.toContain("request 4000 ok");
+  });
+
   it("asks for a fresh upload when a file has expired", async () => {
     const app = createApp({ fetchImpl: vi.fn(), largeFiles: create() });
     const response = await request(app).post("/api/chat/stream").send(chatBody(`doc_${"c".repeat(32)}`));
@@ -269,6 +419,14 @@ describe.each(ENGINES)("chat with large files ($engine engine)", ({ engine, crea
     const response = await request(createApp({ fetchImpl, largeFiles })).post("/api/chat/stream").send(chatBody(meta.id));
     const streamed = events(response.text);
     expect(streamed.at(-1)).toMatchObject({ event: "error", data: { message: "Resource exhausted.", status: 429 } });
+    // The npm engine tells the page too, in words fit to show, with what was found until then.
+    const failed = streamed.filter((event) => event.event === "largeFiles").map((event) => event.data).find((event) => event.type === "run.error");
+    if (engine === "npm") {
+      expect(failed.error).toMatchObject({ message: "The model was busy (HTTP 429).", status: 429 });
+      expect(Object.keys(failed.partial).sort()).toEqual(["evidence", "steps", "usage"]);
+    } else {
+      expect(failed).toBeUndefined();
+    }
   });
 
   it("keeps a file attached earlier in the conversation, and a message that is only a file", async () => {
@@ -512,7 +670,7 @@ describe("pages of a kept PDF (npm engine)", () => {
       if (bodies.length === 1) {
         return sse([{ candidates: [{ content: { role: "model", parts: [
           { functionCall: { name: "view_pages", args: { document_id: documentId, from_page: 2, to_page: 3 } }, thoughtSignature: "sig-1" },
-        ] } }] }]);
+        ] }, finishReason: "STOP" }] }]);
       }
       return sse([{ candidates: [{ content: { role: "model", parts: [{ text: "South (report.pdf page 2)." }] }, finishReason: "STOP" }] }]);
     });
@@ -547,6 +705,21 @@ describe("pages of a kept PDF (npm engine)", () => {
     vi.stubEnv("LARGE_FILES_KEEP_PDFS", "0");
     const meta = await upload(createApp({ largeFiles: createServerLargeFiles("npm") }), await pdf(REPORT));
     expect((await readdir(directory)).sort()).toEqual([`${meta.id}.idx`, `${meta.id}.json`, `${meta.id}.txt`]);
+  });
+
+  it("refuses an upload past LARGE_FILES_MAX_PDF_PAGES or LARGE_FILES_MAX_TEXT_MB", async () => {
+    vi.stubEnv("LARGE_FILES_MAX_PDF_PAGES", "2");
+    vi.stubEnv("LARGE_FILES_MAX_TEXT_MB", "0.001");
+    const app = createApp({ largeFiles: createServerLargeFiles("npm") });
+    const pages = await request(app).post("/api/documents")
+      .set("Content-Type", "application/octet-stream").set("X-File-Name", "report.pdf").set("X-File-Type", "application/pdf")
+      .send(Buffer.from(await pdf(REPORT)));
+    expect(pages.status).toBe(422);
+    expect(pages.body.error).toBe("This PDF has 4 pages, more than the 2 read from one file. Split it, and attach the part you need.");
+    const text = await request(app).post("/api/documents").set("Content-Type", "application/octet-stream").set("X-File-Name", "app.log").send(Buffer.from(log(50)));
+    expect(text.status).toBe(422);
+    expect(text.body.error).toMatch(/^app\.log holds more than .* of text/);
+    expect(await readdir(directory)).toEqual([]);
   });
 
   it("lets Gemini look at pages of a PDF whose text fits, and shows the look as a step", async () => {
@@ -699,7 +872,7 @@ describe("pages of a kept PDF (npm engine)", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
 
     // A remark before a look is not an answer: the model is asked once more, and still says nothing.
-    replies.push([{ candidates: [{ content: { parts: [{ text: "Let me look." }, { functionCall: { name: "view_pages", args: { document_id: meta.id, from_page: 2 } } }] } }] }]);
+    replies.push([{ candidates: [{ content: { parts: [{ text: "Let me look." }, { functionCall: { name: "view_pages", args: { document_id: meta.id, from_page: 2 } } }] }, finishReason: "STOP" }] }]);
     expect(await answer()).toBe("Let me look.\n\nThe model finished without an answer (MAX_TOKENS). Try asking more specifically.");
   });
 
@@ -718,7 +891,7 @@ describe("pages of a kept PDF (npm engine)", () => {
       { role: "user", content: "", files: [{ kind: "document", name: "report.pdf", mimeType: "application/pdf", documentId: meta.id }] },
     ] }));
     const [first, , last] = bodies[0].contents;
-    expect(turnText(first)).toMatch(/^--- Attached file: report\.pdf[^]*Hello\.$/);
+    expect(turnText(first)).toMatch(/^--- Attached file \[mark [0-9a-f]{8}\]: "report\.pdf"[^]*Hello\.$/);
     expect(turnText(last)).toBe("(Attached file: report.pdf. Its text or summary card is at the start of this conversation.)");
 
     // A first message that was only the file: its text stands in for the message, with no empty part beside it.
@@ -729,7 +902,7 @@ describe("pages of a kept PDF (npm engine)", () => {
     ] }));
     const onlyFile = bodies[1].contents[0];
     expect(onlyFile.parts).toHaveLength(1);
-    expect(onlyFile.parts[0].text).toMatch(/^--- Attached file: report\.pdf/);
+    expect(onlyFile.parts[0].text).toMatch(/^--- Attached file \[mark [0-9a-f]{8}\]: "report\.pdf"/);
     expect(JSON.stringify(bodies[1])).not.toContain("(Attached file:");
   });
 });

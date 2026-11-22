@@ -1,3 +1,4 @@
+import type { AskEvent, EventResult, Evidence, ToolOutcome, UsageTotals } from "llm-large-files";
 export type ProviderId = "vertex" | "gemini";
 export type MessageRole = "user" | "assistant";
 export type MessageStatus = "streaming" | "complete" | "stopped" | "error";
@@ -99,6 +100,10 @@ export type ServerDocumentInfo = {
   estimatedTokens: number;
   pages?: number;
   expiresAt: string;
+  /** The older encoding a text file was read in, when it was not UTF-8 ("windows-1255"…). */
+  encoding?: string;
+  /** Characters of the file that could not be read in that encoding, and show as U+FFFD. */
+  replacedCharacters?: number;
 };
 
 export type ChatAttachment = {
@@ -134,6 +139,57 @@ export type LargeFilesConfig = {
   /** PDFs up to this size are sent inline so Gemini can read their layout and images. */
   pdfInlineMaxBytes: number;
   ttlHours: number;
+  /**
+   * The large-file engine in use. Absent from older servers. The token threshold of Settings
+   * reaches the server's plan, and the steps come as typed events, only with "npm".
+   */
+  engine?: "npm" | "original";
+};
+
+/**
+ * The user's own thresholds for large files (Settings). Each one unset (or null) is the server's
+ * value; a value is kept within what the server allows (see `effectiveLargeFilesLimits`).
+ */
+export type LargeFilesOverrides = {
+  /** Text, DOCX and PPTX files above this many KB go to the server. */
+  serverThresholdKb?: number | null;
+  /** PDFs above this many MB go to the server; smaller ones are sent inline. */
+  pdfInlineMaxMb?: number | null;
+  /** Files whose text is estimated at more tokens than this go to the server, and are searched there. */
+  inlineTokens?: number | null;
+};
+
+/**
+ * An event of the large-file library (llm-large-files) as the server forwards it, for a question
+ * with files on the server (npm engine). Left out: `text` (the answer comes in `delta`). The
+ * result of `run.finish` and the partial result of `run.error` hold only what the page shows.
+ */
+export type LargeFilesEvent =
+  | Exclude<AskEvent, { type: "text" } | { type: "run.finish" } | { type: "run.error" }>
+  | (Omit<Extract<AskEvent, { type: "run.finish" }>, "result"> & { result: LargeFilesFinish })
+  | (Omit<Extract<AskEvent, { type: "run.error" }>, "partial"> & { partial?: Pick<EventResult, "steps" | "evidence" | "usage"> });
+
+/** What `run.finish` carries to the page. */
+export type LargeFilesFinish = Pick<EventResult, "answered" | "finishReason" | "blockReason" | "steps" | "evidence" | "turns" | "usage">;
+
+/** A tool call of the large-file library, as a message keeps it. */
+export type LargeFilesToolCall = {
+  callId: string;
+  tool: string;
+  /** One line of plain text: "Search app.log (exact) for “timeout”". */
+  label: string;
+  documentId?: string;
+  /** Set when the call ended. */
+  outcome?: ToolOutcome;
+  ms?: number;
+  /** The finished step, as the steps list shows it. */
+  step?: string;
+  /** The latest progress of a whole-file read. */
+  progress?: { stage: "map" | "reduce"; done: number; total: number; message: string };
+  /** Model requests of this call (a whole-file read) that failed and were sent again. */
+  retries?: number;
+  /** What the call showed the model: the lines or pages of the document. */
+  evidence?: Evidence;
 };
 
 export type ChatRequestFilePart =
@@ -211,6 +267,12 @@ export type ChatMessage = {
   activity?: string;
   /** Steps the model took on large files, or with the presentation tools, while answering. */
   steps?: string[];
+  /** The tool calls of the large-file library for this answer, in order (npm engine). */
+  largeFileCalls?: LargeFilesToolCall[];
+  /** What the library said about the answer outside its steps: a limit reached, no room, a refused prompt. */
+  largeFileNotes?: string[];
+  /** Requests and tokens of the whole question: every model request, the explorer's and whole-file reads' included. */
+  largeFileUsage?: UsageTotals;
   /** Plans and decks the presentation tools made in this turn. */
   presentations?: ChatPresentationCard[];
   id: string;
@@ -275,6 +337,8 @@ export type AppSettings = {
   cacheTtlSeconds: number;
   /** The template the presentation tools use, chosen in PPTX Studio. Unset: the server's default. */
   presentationTemplate?: string;
+  /** Thresholds for large files. Unset: the server's. */
+  largeFiles?: LargeFilesOverrides;
 };
 
 /** A cache this browser created, tracked locally so chat can reuse it until it expires. */
@@ -355,6 +419,11 @@ export type ChatStreamRequest = {
   cachedContent?: string;
   /** Template id for the presentation tools. Unset: the server's default template. */
   presentationTemplate?: string;
+  /**
+   * The most tokens of file text sent in full, when the user set it lower than the server's
+   * (Settings → Large files). The server plans with it (npm engine); above it, files are searched.
+   */
+  largeFilesInlineTokens?: number;
   messages: ChatStreamRequestMessage[];
 };
 
@@ -377,6 +446,8 @@ export type ChatStreamEvent =
   | { event: "activity"; data: { text: string } }
   /** A completed step on a large file, such as a search or a read, kept with the answer. */
   | { event: "step"; data: { text: string } }
+  /** What the large-file library does, as typed events (npm engine). Sent beside activity and step. */
+  | { event: "largeFiles"; data: LargeFilesEvent }
   | { event: "meta"; data: ChatStreamMeta }
   | { event: "delta"; data: { text: string } }
   | { event: "image"; data: ChatStreamImageData }

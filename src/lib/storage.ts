@@ -1,4 +1,4 @@
-import type { AppSettings, Conversation, PublicConfig } from "../../shared/contracts";
+import type { AppSettings, Conversation, LargeFilesOverrides, PublicConfig } from "../../shared/contracts";
 import { DEFAULT_INTERACTIONS, parseInteractionOptions } from "../../shared/interactions";
 import { PRO_MODEL } from "../../shared/gemini-4";
 
@@ -82,14 +82,17 @@ export function loadSettings(): AppSettings {
   try {
     const parsed = JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? "null") as Partial<AppSettings> | null;
     if (parsed?.version === 1 && (parsed.provider === "vertex" || parsed.provider === "gemini")) {
+      const { largeFiles, ...rest } = parsed;
+      const restoredLargeFiles = restoreLargeFiles(largeFiles);
       return {
         ...FALLBACK_SETTINGS,
-        ...parsed,
+        ...rest,
         models: { ...FALLBACK_SETTINGS.models, ...parsed.models },
         proModel: parsed.proModel === true,
         geminiApi: parsed.geminiApi === "generateContent" ? "generateContent" : "interactions",
         vertexApi: parsed.vertexApi === "interactions" ? "interactions" : "generateContent",
         interactions: restoreInteractionSettings(parsed.interactions),
+        ...(restoredLargeFiles ? { largeFiles: restoredLargeFiles } : {}),
       };
     }
   } catch {
@@ -109,6 +112,23 @@ function restoreInteractionSettings(value: unknown) {
   }
 }
 
+const LARGE_FILES_FIELDS = ["serverThresholdKb", "pdfInlineMaxMb", "inlineTokens"] as const;
+
+/**
+ * The user's large-file thresholds as saved: a finite number of zero or more, or null (the server's
+ * value). Anything else is dropped, and so are thresholds with no field left.
+ */
+function restoreLargeFiles(value: unknown): LargeFilesOverrides | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const saved = value as Record<string, unknown>;
+  const restored: LargeFilesOverrides = {};
+  for (const field of LARGE_FILES_FIELDS) {
+    const entry = saved[field];
+    if (entry === null || (typeof entry === "number" && Number.isFinite(entry) && entry >= 0)) restored[field] = entry;
+  }
+  return Object.keys(restored).length > 0 ? restored : undefined;
+}
+
 export function saveSettings(settings: AppSettings): void {
   localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
 }
@@ -126,7 +146,15 @@ export function settingsForConfig(settings: AppSettings, config: PublicConfig): 
   // An older server without the Pro model would reject every turn, so the toggle turns itself off.
   const proModel = settings.proModel
     && config.providers[settings.provider].models.some((model) => model.id === PRO_MODEL.id);
-  return { ...settings, models: { vertex: vertexModel, gemini: geminiModel }, proModel, region };
+  // The large-file thresholds stay as saved, even above what this server allows: these settings are
+  // saved again, and a server whose limits dip for a while must not lower them for good.
+  // effectiveLargeFilesLimits and requestInlineTokens keep them within the server's bounds when used.
+  return {
+    ...settings,
+    models: { vertex: vertexModel, gemini: geminiModel },
+    proModel,
+    region,
+  };
 }
 
 export function conversationTitle(text: string): string {

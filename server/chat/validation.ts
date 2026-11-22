@@ -25,6 +25,11 @@ const MAX_TOTAL_INLINE_DATA_CHARACTERS = 28_000_000;
  * this is that budget, like the inline PDF limit above.
  */
 const MAX_TOTAL_TEXT_FILE_CHARACTERS = 21_000_000;
+/**
+ * The lowest token threshold for large files a request may carry (Settings → Large files, the
+ * browser's MIN_INLINE_TOKENS): below it, almost every file would be searched.
+ */
+const MIN_LARGE_FILES_INLINE_TOKENS = 1_000;
 const CACHED_CONTENT_PATTERN = /^projects\/[A-Za-z0-9._-]+\/locations\/([a-z0-9-]+)\/cachedContents\/[A-Za-z0-9_-]+$/;
 
 function isRole(value: unknown): value is MessageRole {
@@ -67,6 +72,17 @@ export function validateChatRequest(
   if (input.presentationTemplate !== undefined && input.presentationTemplate !== "") {
     if (typeof input.presentationTemplate !== "string" || !PRESENTATION_TEMPLATE_ID.test(input.presentationTemplate)) fail("Invalid presentationTemplate.");
     presentationTemplate = input.presentationTemplate;
+  }
+
+  // The user's own token threshold for large files. The planner never goes above the server's
+  // own, so a larger value is the server's (see requestBudget in document-stream.ts).
+  let largeFilesInlineTokens: number | undefined;
+  if (input.largeFilesInlineTokens !== undefined) {
+    const value = input.largeFilesInlineTokens;
+    if (typeof value !== "number" || !Number.isSafeInteger(value) || value < MIN_LARGE_FILES_INLINE_TOKENS) {
+      fail(`largeFilesInlineTokens must be an integer of at least ${MIN_LARGE_FILES_INLINE_TOKENS}.`);
+    }
+    largeFilesInlineTokens = value;
   }
 
   if (typeof input.model !== "string" || !input.model.trim()) fail("model is required.");
@@ -235,6 +251,7 @@ export function validateChatRequest(
     ...(tool ? { tool } : {}),
     ...(cachedContent ? { cachedContent } : {}),
     ...(presentationTemplate ? { presentationTemplate } : {}),
+    ...(largeFilesInlineTokens ? { largeFilesInlineTokens } : {}),
     messages,
   };
 }

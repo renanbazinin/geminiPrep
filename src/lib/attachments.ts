@@ -1,12 +1,14 @@
 import type { ChatAttachment, ChatAttachmentKind, ChatRequestFilePart, LargeFilesConfig } from "../../shared/contracts";
 import { estimateTokens } from "../../shared/token-estimate";
+import { MAX_ATTACHMENT_BYTES } from "./attachment-limits";
 import { createId } from "./storage";
-import { deleteDocument, uploadDocument } from "./api";
+import { deleteDocument, uploadDocument, type UploadProgress } from "./api";
 
 const DATABASE_NAME = "gemini-prep-files-v1";
 const STORE_NAME = "attachments";
 export const MAX_ATTACHMENTS_PER_MESSAGE = 10;
-export const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
+// Re-exported: it lives in its own module so the limits can use it without importing this one.
+export { MAX_ATTACHMENT_BYTES };
 /** The most extracted text kept in this browser when there are no large-file limits (the cache lab). */
 export const MAX_EXTRACTED_CHARACTERS = 1_000_000;
 
@@ -178,11 +180,45 @@ export function textGoesToServer(text: string, limits: LargeFilesConfig): boolea
   return text.length > limits.serverThresholdBytes || estimateTokens(text) > limits.inlineTokens;
 }
 
-async function uploadAttachment(file: File, kind: ChatAttachmentKind, limits: LargeFilesConfig): Promise<ChatAttachment> {
+/** What `processAttachment` reports and listens to while a file goes to the server. */
+export type AttachmentOptions = {
+  /** The server's progress while it reads an uploaded file (npm engine). */
+  onProgress?(progress: UploadProgress): void;
+  /** Stops the upload; the server then stores nothing. */
+  signal?: AbortSignal;
+};
+
+const STAGE_WORDS: Record<UploadProgress["stage"], { verb: string; noun?: string }> = {
+  check: { verb: "checking" },
+  extract: { verb: "reading" },
+  pictures: { verb: "checking pictures on" },
+  decode: { verb: "decoding the text" },
+  prepare: { verb: "preparing the text" },
+  index: { verb: "indexing the lines" },
+  store: { verb: "saving", noun: "part" },
+};
+
+/**
+ * One line of plain English for the server's progress on an upload: "reading pages 120 of 400",
+ * "preparing the text (45%)", "saving part 2 of 3".
+ */
+export function describeUploadProgress(progress: UploadProgress): string {
+  const words = STAGE_WORDS[progress.stage] ?? { verb: progress.stage };
+  const { done, total, unit } = progress;
+  if (unit === "pages" || unit === "parts") {
+    const noun = words.noun ?? unit;
+    const count = total !== undefined ? `${done.toLocaleString()} of ${total.toLocaleString()}` : done.toLocaleString();
+    return `${words.verb} ${noun} ${count}`;
+  }
+  if (total !== undefined && total > 0 && done < total) return `${words.verb} (${Math.floor((done / total) * 100)}%)`;
+  return words.verb;
+}
+
+async function uploadAttachment(file: File, kind: ChatAttachmentKind, limits: LargeFilesConfig, options: AttachmentOptions): Promise<ChatAttachment> {
   if (file.size > limits.maxUploadBytes) {
     throw new Error(`${file.name} is larger than the ${Math.round(limits.maxUploadBytes / 1024 / 1024)} MB upload limit.`);
   }
-  const uploaded = await uploadDocument(file, file.name, file.type);
+  const uploaded = await uploadDocument(file, file.name, file.type, options);
   return {
     id: createId(),
     storageKey: `server:${uploaded.id}`,
@@ -197,6 +233,8 @@ async function uploadAttachment(file: File, kind: ChatAttachmentKind, limits: La
       estimatedTokens: uploaded.estimatedTokens,
       ...(uploaded.pages ? { pages: uploaded.pages } : {}),
       expiresAt: uploaded.expiresAt,
+      ...(typeof uploaded.encoding === "string" && uploaded.encoding ? { encoding: uploaded.encoding } : {}),
+      ...(typeof uploaded.replacedCharacters === "number" && uploaded.replacedCharacters > 0 ? { replacedCharacters: uploaded.replacedCharacters } : {}),
     },
   };
 }
@@ -205,11 +243,11 @@ async function uploadAttachment(file: File, kind: ChatAttachmentKind, limits: La
  * Prepares one file for chat. Without `largeFiles` limits (as on the cache lab page) every file
  * stays in this browser. With them, large files are uploaded and the server plans their use.
  */
-export async function processAttachment(file: File, options: { largeFiles?: LargeFilesConfig } = {}): Promise<ChatAttachment> {
+export async function processAttachment(file: File, options: AttachmentOptions & { largeFiles?: LargeFilesConfig } = {}): Promise<ChatAttachment> {
   const kind = attachmentKind(file);
   if (!kind) throw new Error(`${file.name} is not a supported file type.`);
   const limits = options.largeFiles;
-  if (limits && goesToServer(file, kind, limits)) return uploadAttachment(file, kind, limits);
+  if (limits && goesToServer(file, kind, limits)) return uploadAttachment(file, kind, limits, options);
   if (file.size > MAX_ATTACHMENT_BYTES) {
     throw new Error(`${file.name} is larger than the local ${MAX_ATTACHMENT_BYTES / 1024 / 1024} MB limit.`);
   }
@@ -223,7 +261,7 @@ export async function processAttachment(file: File, options: { largeFiles?: Larg
     if (kind === "docx") text = await extractDocxText(await file.arrayBuffer());
     else if (kind === "pptx") text = await extractPptxText(await file.arrayBuffer());
     else text = await file.text();
-    if (limits && textGoesToServer(text, limits)) return uploadAttachment(file, kind, limits);
+    if (limits && textGoesToServer(text, limits)) return uploadAttachment(file, kind, limits, options);
     // With large-file limits, longer or denser text has just gone to the server, so the text left is sent as it is.
     text = ensureExtractedSize(text, file.name, limits ? limits.serverThresholdBytes : MAX_EXTRACTED_CHARACTERS);
     extractedCharacters = text.length;

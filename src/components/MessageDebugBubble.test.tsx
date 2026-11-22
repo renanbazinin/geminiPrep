@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ChatMessageDebug } from "../../shared/contracts";
 import { MessageDebugBubble, shortenDebugValue } from "./MessageDebugBubble";
@@ -90,5 +90,38 @@ describe("message debug bubble", () => {
     render(<MessageDebugBubble debug={debug} />);
     expect(screen.getByText("implicit · 4,800")).toBeInTheDocument();
     expect(screen.getByText("Cache hit · implicit")).toBeInTheDocument();
+  });
+
+  it("shows the requests and tokens of a whole question on large files, per model", () => {
+    const usage = {
+      requests: 7, inputTokens: 48_200, cachedInputTokens: 6_000, outputTokens: 1_320, thoughtTokens: 0,
+      byModel: {
+        "gemini-3.8-flash": { requests: 3, inputTokens: 20_000, cachedInputTokens: 6_000, outputTokens: 900, thoughtTokens: 0 },
+        "gemini-3.8-flash-lite": { requests: 4, inputTokens: 28_200, cachedInputTokens: 0, outputTokens: 420, thoughtTokens: 0 },
+      },
+    };
+    render(<MessageDebugBubble debug={debugTrace()} largeFileUsage={usage} />);
+    expect(screen.getByText("Large files · whole question")).toBeInTheDocument();
+    const rows = within(screen.getByRole("table")).getAllByRole("row");
+    expect(rows.map((row) => row.textContent)).toEqual([
+      "ModelRequestsInput tokensCachedOutput tokens",
+      "All models748,2006,0001,320",
+      "gemini-3.8-flash320,0006,000900",
+      "gemini-3.8-flash-lite428,2000420",
+    ]);
+  });
+
+  it("names the one model of a question in place of a total", () => {
+    const totals = { requests: 2, inputTokens: 4_400, cachedInputTokens: 0, outputTokens: 36, thoughtTokens: 0 };
+    render(<MessageDebugBubble debug={debugTrace()} largeFileUsage={{ ...totals, byModel: { "gemini-3.8-flash": totals } }} />);
+    expect(screen.getAllByRole("row").map((row) => row.textContent)).toEqual([
+      "ModelRequestsInput tokensCachedOutput tokens",
+      "gemini-3.8-flash24,400036",
+    ]);
+  });
+
+  it("shows no large-file totals without them", () => {
+    render(<MessageDebugBubble debug={debugTrace()} />);
+    expect(screen.queryByText("Large files · whole question")).not.toBeInTheDocument();
   });
 });

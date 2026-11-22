@@ -85,6 +85,19 @@ export function materializeDocuments(request: ChatStreamRequest, blocks: Map<str
   };
 }
 
+/**
+ * The budget to plan this question with, when the user set a lower token threshold for large files
+ * (Settings → Large files, `largeFilesInlineTokens`) than the library's own: files of more tokens
+ * are then searched, as the browser expected when it uploaded them. Never above the library's own
+ * value, which is all the text the server sends in full. Only the npm engine takes a budget per
+ * question; the original engine keeps its own.
+ */
+export function requestBudget(request: ChatStreamRequest, largeFiles: ServerLargeFiles): { inlineTokens: number } | undefined {
+  if (largeFiles.engine !== "npm" || request.largeFilesInlineTokens === undefined) return undefined;
+  const server = largeFiles.files.budget.inlineTokens;
+  return request.largeFilesInlineTokens < server ? { inlineTokens: request.largeFilesInlineTokens } : undefined;
+}
+
 /** What a finished tool call found, appended to its description for the steps list. */
 function stepSummary(label: string, result: ToolResult): string {
   if (typeof result.error === "string") return ` — failed: ${result.error}`;
@@ -118,7 +131,10 @@ export async function proxyDocumentChat(options: {
   const { request, response, largeFiles } = options;
   const ids = documentIds(request);
   const base = baseRequestSize(request);
-  const prepared = await largeFiles.files.prepare(ids, base);
+  const budget = requestBudget(request, largeFiles);
+  const prepared = budget && largeFiles.engine === "npm"
+    ? await largeFiles.files.prepare(ids, base, { budget })
+    : await largeFiles.files.prepare(ids, base);
   if (prepared.missing.length) {
     const names = request.messages.flatMap((message) => message.files ?? [])
       .filter((file) => file.kind === "document" && prepared.missing.includes(file.documentId))
@@ -136,7 +152,7 @@ export async function proxyDocumentChat(options: {
   // Those answer as before, from the text alone.
   const looks = !searches && largeFiles.engine === "npm" && !request.tool && !request.interactions
     && resolveLargeFilesSettings().keepPdfs
-    && (await largeFiles.files.prepare(ids, base, { viewPages: true })).viewable.length > 0;
+    && (await largeFiles.files.prepare(ids, base, { viewPages: true, ...(budget ? { budget } : {}) })).viewable.length > 0;
   // Nothing to search or to look at, or the image model is answering (it cannot call tools), or the
   // presentation tools are (they plan from the text or summary card of each file): use the normal path.
   if ((!searches && !looks) || request.tool === "image" || request.tool === "presentation") {
@@ -149,7 +165,7 @@ export async function proxyDocumentChat(options: {
   }
   if (largeFiles.engine === "npm") {
     // askGemini plans and places the documents itself, so it gets the original references.
-    await streamWithPackage({ ...options, files: largeFiles.files });
+    await streamWithPackage({ ...options, files: largeFiles.files, ...(budget ? { budget } : {}) });
     return;
   }
   await runToolLoop({ ...options, request: materialized, prepared, largeFiles: largeFiles.files });

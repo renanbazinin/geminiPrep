@@ -1,3 +1,4 @@
+import type { IngestEvent } from "llm-large-files";
 import type {
   ChatPresentationCard,
   ChatStreamEvent,
@@ -5,6 +6,7 @@ import type {
   ChatStreamRequest,
   ChatStreamToolData,
   DocumentUploadResult,
+  LargeFilesEvent,
   PublicConfig,
   RegionTestConfig,
 } from "../../shared/contracts";
@@ -27,20 +29,91 @@ export async function fetchRegionConfig(signal?: AbortSignal): Promise<RegionTes
   return response.json() as Promise<RegionTestConfig>;
 }
 
-/** Uploads a large file as raw bytes; the server extracts, indexes, and keeps it for a limited time. */
-export async function uploadDocument(file: Blob, name: string, mimeType: string, signal?: AbortSignal): Promise<DocumentUploadResult> {
+/** How far the server is with an upload it reads (npm engine): a stage, and how much of it is done. */
+export type UploadProgress = Omit<Extract<IngestEvent, { type: "ingest.progress" }>, "seq" | "runId" | "time" | "type">;
+
+/**
+ * The messages of a Server-Sent Events body, one `data` text each (several `data:` lines joined).
+ * Lines end with CRLF, CR or LF (a CRLF split between two chunks is still one break), never with
+ * other line breaks such as U+2028, which JSON may hold as they are; comments (keep-alives) and
+ * messages without data are skipped.
+ */
+async function* sseData(body: ReadableStream<Uint8Array>, signal?: AbortSignal): AsyncGenerator<{ event?: string; data: string }> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      signal?.throwIfAborted();
+      buffer += decoder.decode(value, { stream: !done });
+      // A CR that ends a chunk may be the first half of a CRLF: it waits for the next chunk (or the end).
+      buffer = done ? buffer.replace(/\r\n?/g, "\n") : buffer.replace(/\r\n|\r(?!$)/g, "\n");
+      if (done && buffer.trim()) buffer += "\n\n";
+      let boundary = buffer.indexOf("\n\n");
+      while (boundary >= 0) {
+        const lines = buffer.slice(0, boundary).split("\n");
+        buffer = buffer.slice(boundary + 2);
+        const event = lines.find((line) => line.startsWith("event:"))?.slice(6).trim();
+        const data = lines.filter((line) => line.startsWith("data:")).map((line) => line.slice(line.startsWith("data: ") ? 6 : 5)).join("\n");
+        if (data) yield { ...(event ? { event } : {}), data };
+        boundary = buffer.indexOf("\n\n");
+      }
+      if (done) return;
+    }
+  } finally {
+    await reader.cancel().catch(() => undefined);
+    reader.releaseLock();
+  }
+}
+
+/**
+ * Uploads a large file as raw bytes; the server extracts, indexes, and keeps it for a limited time.
+ * It asks for the server's progress as Server-Sent Events: a server that sends them (npm engine)
+ * reports each stage to `onProgress` and ends with the document or the reason it was not stored.
+ * A server that answers with JSON (original engine) is read as before, and so is every HTTP error.
+ */
+export async function uploadDocument(
+  file: Blob,
+  name: string,
+  mimeType: string,
+  options: { onProgress?(progress: UploadProgress): void; signal?: AbortSignal } = {},
+): Promise<DocumentUploadResult> {
   const response = await fetch("/api/documents", {
     method: "POST",
     headers: {
       "Content-Type": "application/octet-stream",
       "X-File-Name": encodeURIComponent(name),
       "X-File-Type": mimeType || "application/octet-stream",
+      Accept: "text/event-stream",
     },
     body: file,
-    signal,
+    signal: options.signal,
   });
   if (!response.ok) throw new Error(await responseError(response));
-  return response.json() as Promise<DocumentUploadResult>;
+  if (!response.headers.get("Content-Type")?.includes("text/event-stream")) return response.json() as Promise<DocumentUploadResult>;
+  if (!response.body) throw new Error("The server returned an empty upload answer.");
+  for await (const message of sseData(response.body, options.signal)) {
+    let event: IngestEvent;
+    try {
+      event = JSON.parse(message.data) as IngestEvent;
+    } catch {
+      continue;
+    }
+    if (event.type === "ingest.progress") {
+      options.onProgress?.({
+        stage: event.stage,
+        done: event.done,
+        ...(typeof event.total === "number" ? { total: event.total } : {}),
+        unit: event.unit,
+      });
+    }
+    if (event.type === "ingest.finish") return event.document as DocumentUploadResult;
+    if (event.type === "ingest.error") {
+      throw new Error(typeof event.error?.message === "string" && event.error.message ? event.error.message : `${name} could not be uploaded.`);
+    }
+  }
+  throw new Error(`The upload of ${name} ended before the server said whether it was stored.`);
 }
 
 export async function deleteDocument(id: string): Promise<void> {
@@ -56,6 +129,8 @@ export async function streamChat(
     onThinking?(text: string): void;
     onActivity?(text: string): void;
     onStep?(text: string): void;
+    /** What the large-file library does, as typed events (npm engine), beside `onActivity` and `onStep`. */
+    onLargeFiles?(event: LargeFilesEvent): void;
     onGrounding?(data: Extract<ChatStreamEvent, { event: "grounding" }>["data"]): void;
     onImage?(image: ChatStreamImageData): void | Promise<void>;
     onTool?(tool: ChatStreamToolData): void | Promise<void>;
@@ -111,6 +186,7 @@ export async function streamChat(
         if (eventName === "thinking" && typeof data.text === "string") handlers.onThinking?.(data.text);
         if (eventName === "activity" && typeof data.text === "string") handlers.onActivity?.(data.text);
         if (eventName === "step" && typeof data.text === "string") handlers.onStep?.(data.text);
+        if (eventName === "largeFiles" && typeof data.type === "string") handlers.onLargeFiles?.(data as unknown as LargeFilesEvent);
         if (eventName === "grounding") handlers.onGrounding?.(data as Extract<ChatStreamEvent, { event: "grounding" }>["data"]);
         if (eventName === "image" && typeof data.mimeType === "string" && typeof data.data === "string") {
           const mimeType = normalizeImageMimeType(data.mimeType) ?? (data.mimeType.startsWith("image/") ? "image/png" : null);

@@ -76,6 +76,16 @@ describe("chat validation", () => {
       .toThrow(/thinkingLevel must be low or high/);
   });
 
+  it("accepts the user's token threshold for large files as an integer of at least 1,000", () => {
+    expect(validateChatRequest(validBody({ largeFilesInlineTokens: 50_000 }), catalogs()).largeFilesInlineTokens).toBe(50_000);
+    expect(validateChatRequest(validBody({ largeFilesInlineTokens: 1_000 }), catalogs()).largeFilesInlineTokens).toBe(1_000);
+    expect(validateChatRequest(validBody(), catalogs())).not.toHaveProperty("largeFilesInlineTokens");
+    for (const value of [999, 0, -5_000, 1_500.5, "50000", null, Number.MAX_VALUE, Number.POSITIVE_INFINITY]) {
+      expect(() => validateChatRequest(validBody({ largeFilesInlineTokens: value }), catalogs()))
+        .toThrow("largeFilesInlineTokens must be an integer of at least 1000.");
+    }
+  });
+
   it("accepts a cachedContent resource name in the request's own region", () => {
     const region = resolveProbeRegions()[0].id;
     const body = validBody({

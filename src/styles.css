@@ -604,6 +604,35 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 .file-steps ol { margin: 8px 0 0; padding-inline-start: 20px; }
 .file-steps li { margin: 3px 0; color: var(--muted); }
 
+/* Large files (npm engine): the tool calls of an answer, their progress and outcome, and the notes. */
+.file-steps ol.large-file-calls { padding-inline-start: 0; list-style: none; display: grid; gap: 7px; }
+.large-file-call { display: grid; grid-template-columns: 18px minmax(0, 1fr); align-items: start; gap: 8px; }
+.large-file-outcome { width: 18px; height: 18px; display: grid; place-items: center; border-radius: 5px; background: var(--surface-3); color: var(--subtle); font-size: 0.7rem; font-weight: 700; line-height: 1; }
+.large-file-call-ok .large-file-outcome { background: #14231f; color: var(--success); }
+.large-file-call-error .large-file-outcome { background: #28181b; color: var(--danger); }
+.large-file-call-refused .large-file-outcome, .large-file-call-not_run .large-file-outcome { background: #221d14; color: var(--warning); }
+.large-file-call-already_shown .large-file-outcome, .large-file-call-running .large-file-outcome { background: #211d38; color: var(--accent-strong); }
+.large-file-call-body { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.large-file-call-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
+.large-file-label { overflow-wrap: anywhere; color: #c8cdd5; }
+.large-file-result { overflow-wrap: anywhere; }
+.large-file-retries { padding: 1px 6px; border: 1px solid #5b4d30; border-radius: 999px; color: var(--warning); font-size: 0.62rem; }
+.large-file-ms { margin-inline-start: auto; color: var(--subtle); font: 0.62rem "Cascadia Code", Consolas, monospace; white-space: nowrap; }
+.large-file-progress { display: flex; align-items: center; gap: 8px; }
+.large-file-progress-track { flex: 1 1 auto; max-width: 240px; height: 5px; border-radius: 999px; background: var(--surface-3); overflow: hidden; }
+.large-file-progress-track > span { display: block; height: 100%; border-radius: inherit; background: var(--accent); transition: width 160ms ease; }
+.large-file-progress small, .large-file-progress-ended, .large-file-evidence { color: var(--subtle); font-size: 0.68rem; font-variant-numeric: tabular-nums; }
+.large-file-notes { margin: 0 0 14px; padding: 8px 12px 8px 28px; border: 1px solid #5b492b; border-radius: 10px; background: #211c14; color: #e8c88d; font-size: 12px; line-height: 1.5; }
+.attachment-processing span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
+.debug-usage-table { width: 100%; border-collapse: collapse; border: 1px solid var(--border); border-radius: 8px; background: #11151a; font-size: 0.62rem; }
+.debug-usage-table th, .debug-usage-table td { padding: 6px 8px; border-bottom: 1px solid var(--border-soft); text-align: end; white-space: nowrap; }
+.debug-usage-table thead th { color: var(--subtle); font-weight: 600; }
+.debug-usage-table th[scope="row"], .debug-usage-table thead th:first-child { overflow: hidden; max-width: 180px; text-overflow: ellipsis; text-align: start; color: #d7dce3; }
+.debug-usage-table td { color: #d7dce3; font-family: "Cascadia Code", Consolas, monospace; font-variant-numeric: tabular-nums; }
+.debug-usage-table tbody tr:last-child > * { border-bottom: 0; }
+.debug-usage-scroll { overflow-x: auto; }
+
 /* Presentations: a layout drawn as boxes, and the plan and deck cards in the chat. */
 .slide-wireframe { display: block; width: 100%; height: auto; border-radius: 5px; }
 /* The server's picture of a slide. The light ground shows while it loads. */

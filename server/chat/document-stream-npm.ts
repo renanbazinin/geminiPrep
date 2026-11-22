@@ -1,7 +1,7 @@
 import type { Response } from "express";
-import type { LargeFiles } from "llm-large-files";
+import type { AskEvent, LargeFiles } from "llm-large-files";
 import { askGemini, GeminiRequestError, type GeminiContent } from "llm-large-files/gemini";
-import type { ChatStreamEvent, ChatStreamRequest } from "../../shared/contracts.js";
+import type { ChatStreamEvent, ChatStreamRequest, LargeFilesEvent } from "../../shared/contracts.js";
 import { gemini4OutputTokens, isGemini4Model } from "../../shared/gemini-4.js";
 import { resolveLargeFilesSettings } from "../documents/config.js";
 import { toGenerateContentUrl } from "../special-group/model-loop.js";
@@ -44,19 +44,64 @@ export function withoutDocuments(request: ChatStreamRequest): ChatStreamRequest 
   };
 }
 
+/** How often a quiet stream gets a comment, so that a proxy does not close it during a long whole-file read. */
+const KEEP_ALIVE_MS = 15_000;
+
+/**
+ * An event of askGemini as the browser gets it (`largeFiles`), or undefined for one it does not
+ * get. `text` is left out: the answer comes in `delta`. The result of `run.finish`, and the partial
+ * result of `run.error`, keep only what the page shows: not the tool rounds (they hold the text of
+ * the documents), the plan's documents, the budget or the provider's usage object. A tool result
+ * is never sent (eventResults is off; it is dropped here too, should it come).
+ */
+export function largeFilesEventOf(event: AskEvent): LargeFilesEvent | undefined {
+  switch (event.type) {
+    case "text":
+      return undefined;
+    case "run.finish": {
+      const { answered, finishReason, blockReason, steps, evidence, turns, usage } = event.result;
+      return {
+        ...event,
+        result: {
+          answered,
+          ...(finishReason === undefined ? {} : { finishReason }),
+          ...(blockReason === undefined ? {} : { blockReason }),
+          steps,
+          evidence,
+          turns,
+          usage,
+        },
+      };
+    }
+    case "run.error": {
+      const { partial, ...rest } = event;
+      return partial ? { ...rest, partial: { steps: partial.steps, evidence: partial.evidence, usage: partial.usage } } : rest;
+    }
+    case "tool.end": {
+      const { result: _result, ...rest } = event;
+      return rest;
+    }
+    default:
+      return event;
+  }
+}
+
 /**
  * The npm engine's tool loop: llm-large-files' askGemini, streamed to the browser with the same
- * events as the original loop (meta, activity, step, delta, done, error).
+ * events as the original loop (meta, activity, step, delta, done, error), and beside them the
+ * library's own typed events (`largeFiles`), for a page that shows each tool call as it goes.
  */
 export async function streamWithPackage(options: {
   request: ChatStreamRequest;
   project: string | null;
   response: Response;
   files: LargeFiles;
+  /** Budget fields for this question in place of the library's (the user's token threshold, see `requestBudget`). */
+  budget?: { inlineTokens: number };
   fetchImpl?: typeof fetch;
   signal?: AbortSignal;
 }): Promise<void> {
-  const { project, response, files, signal, fetchImpl = fetch } = options;
+  const { project, response, files, budget, signal, fetchImpl = fetch } = options;
   // Tool calling runs on Generate Content, whichever chat API is selected.
   const { interactions: _i, interactionProject: _p, previousInteractionId: _id, cachedContent: _c, ...request } = options.request;
   const startedMs = Date.now();
@@ -75,7 +120,13 @@ export async function streamWithPackage(options: {
   const send = (event: ChatStreamEvent) => {
     if (!signal?.aborted && !response.writableEnded) response.write(`event: ${event.event}\ndata: ${JSON.stringify(event.data)}\n\n`);
   };
-  response.status(200).set({ "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-cache, no-transform", Connection: "keep-alive" });
+  response.status(200).set({
+    "Content-Type": "text/event-stream; charset=utf-8",
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive",
+    // nginx and the like would otherwise hold the events back until the answer is done.
+    "X-Accel-Buffering": "no",
+  });
   response.flushHeaders();
   send({ event: "meta", data: {
     api: "generateContent",
@@ -104,6 +155,12 @@ export async function streamWithPackage(options: {
   let textCharacters = 0;
   let deltaCount = 0;
   let firstTokenMs: number | undefined;
+  // A whole-file read can send nothing for minutes. An SSE comment, which every client skips, keeps
+  // the connection open meanwhile.
+  const keepAlive = setInterval(() => {
+    if (!signal?.aborted && !response.writableEnded) response.write(": keep-alive\n\n");
+  }, KEEP_ALIVE_MS);
+  keepAlive.unref();
   try {
     const result = await askGemini({
       files,
@@ -121,6 +178,7 @@ export async function streamWithPackage(options: {
       ...(explorerConfig ? { explorerGenerationConfig: explorerConfig } : {}),
       // The most requests for one answer, the last of them without tools.
       maxToolTurns: settings.maxToolTurns,
+      ...(budget ? { budget } : {}),
       // view_pages: the model asks for pages of a kept PDF and gets them as a small PDF.
       viewPages: settings.keepPdfs,
       toolFilePlacement: settings.pagePlacement,
@@ -137,6 +195,10 @@ export async function streamWithPackage(options: {
       },
       onActivity: (text) => send({ event: "activity", data: { text } }),
       onStep: (text) => send({ event: "step", data: { text } }),
+      onEvent: (event) => {
+        const data = largeFilesEventOf(event);
+        if (data) send({ event: "largeFiles", data });
+      },
       fetch: fetchImpl,
       ...(signal ? { signal } : {}),
     });
@@ -172,6 +234,8 @@ export async function streamWithPackage(options: {
       finishedAt: new Date().toISOString(),
       durationMs: Date.now() - startedMs,
     } });
+  } finally {
+    clearInterval(keepAlive);
   }
   response.end();
 }
