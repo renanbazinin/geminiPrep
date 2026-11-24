@@ -168,7 +168,9 @@ export async function proxyDocumentChat(options: {
     await streamWithPackage({ ...options, files: largeFiles.files, ...(budget ? { budget } : {}) });
     return;
   }
-  await runToolLoop({ ...options, request: materialized, prepared, largeFiles: largeFiles.files });
+  // Only the original engine gets here, so `prepared` came from its prepare(): the package's
+  // formats (html, xlsx since 0.8) never reach this loop.
+  await runToolLoop({ ...options, request: materialized, prepared: prepared as PreparedContext, largeFiles: largeFiles.files });
 }
 
 async function runToolLoop(options: {
