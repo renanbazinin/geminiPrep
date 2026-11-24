@@ -845,7 +845,8 @@ describe("pages of a kept PDF (npm engine)", () => {
     });
     const app = createApp({ fetchImpl, largeFiles });
     const meta = await upload(app, await pdf(REPORT));
-    const search = ["search_document", "read_document", "get_document_overview", "analyze_whole_document"];
+    // aggregate_table joined the package's tools in 0.8.1.
+    const search = ["search_document", "read_document", "get_document_overview", "aggregate_table", "analyze_whole_document"];
 
     await request(app).post("/api/chat/stream").send(reportBody(meta.id));
     expect(bodies[0].tools[0].functionDeclarations.map((tool) => tool.name)).toEqual([...search, "view_pages"]);
